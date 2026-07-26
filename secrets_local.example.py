@@ -1,6 +1,9 @@
 """
-Copy this to secrets.py and fill it in.  secrets.py is gitignored and must
-never be committed — this repository is public.
+Copy this to secrets_local.py and fill it in.  secrets_local.py is gitignored
+and must never be committed — this repository is public.
+
+(Named secrets_local, not secrets, because a local secrets.py would shadow
+Python's standard-library `secrets` module.)
 
 If a token ever does reach a commit, rewriting history is not enough: assume it
 is compromised and revoke it with @BotFather.

@@ -27,6 +27,7 @@ from urllib.parse import urlparse, parse_qs
 
 import config
 import gpu
+import notify
 import paths
 import queue_manager as qm
 from controller import Controller
@@ -35,7 +36,7 @@ PORT       = config.PORT
 STATIC_DIR = os.path.join(config.APP_DIR, "static")
 TILE_RE    = re.compile(r"tile_r(\d+)_c(\d+)\.")
 
-controller = Controller()
+controller = Controller(notify=notify.job_event)
 
 _thumb_cache = {"key": None, "bytes": None}
 _thumb_lock  = threading.Lock()
@@ -127,6 +128,24 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass                       # the console belongs to render output
 
+    def _access_ok(self):
+        """
+        Fail closed if the Cloudflare tunnel is live without Access in front.
+
+        Requests that came down the tunnel carry the public hostname in Host.
+        With Access configured, Cloudflare attaches Cf-Access-Jwt-Assertion to
+        every authenticated request; without Access, the header is absent — so
+        its absence on a tunnel request means the front door is open and we
+        refuse to serve. Local requests (Host = 127.0.0.1) are untouched.
+        """
+        pub = getattr(config, "PUBLIC_HOSTNAME", "")
+        if not pub:
+            return True
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        if host != pub.lower():
+            return True
+        return bool(self.headers.get("Cf-Access-Jwt-Assertion"))
+
     # -- responses --
 
     def _send(self, code, body=b"", ctype="text/plain; charset=utf-8", cache=False):
@@ -147,6 +166,8 @@ class Handler(BaseHTTPRequestHandler):
     # -- routing --
 
     def do_GET(self):
+        if not self._access_ok():
+            return self._send(403, "Cloudflare Access required")
         u    = urlparse(self.path)
         path = u.path
         try:
@@ -168,6 +189,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
 
     def do_POST(self):
+        if not self._access_ok():
+            return self._send(403, "Cloudflare Access required")
         path = urlparse(self.path).path
         try:
             n    = int(self.headers.get("Content-Length") or 0)
@@ -228,9 +251,15 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     config.ensure_dirs()
 
-    found = controller.recover()
+    # Boot recovery: any job left 'running' with no live Blender behind it is
+    # marked interrupted, re-queued at the front, and started again — this is
+    # the whole point of the app surviving a power cut.
+    found, started = controller.recover_and_resume()
     if found:
         print(f"  recovered {len(found)} interrupted job(s): {', '.join(found)}")
+        if started:
+            print(f"  auto-resumed: {started['id']} — {started['name']}")
+    print(f"  telegram        :  {'on' if notify.enabled() else 'off (no secrets_local.py)'}")
 
     # Localhost only. Remote access arrives through cloudflared, which runs on
     # this machine and connects over 127.0.0.1 — the app is never on the LAN.

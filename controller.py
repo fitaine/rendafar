@@ -8,7 +8,7 @@ import threading
 
 import config
 import queue_manager as qm
-from runner import Runner, pid_alive
+from runner import Runner, pid_alive, kill_tree
 
 
 class Controller:
@@ -27,6 +27,12 @@ class Controller:
         the machine lost power, or the app was killed.  Mark it 'interrupted'
         so it is visibly distinct from a job the user stopped on purpose.
 
+        If the old Blender process is STILL alive (the server crashed, Blender
+        didn't), it is killed too: this process has no pipe to its stdout and
+        no way to finalise it, and leaving it would allow a second render to
+        start beside it.  Killing costs at most one tile; the resume that
+        follows re-renders it supervised.
+
         Returns the list of job ids that were found interrupted.
         """
         config.ensure_dirs()
@@ -37,10 +43,12 @@ class Controller:
             for job in qm.all_jobs():
                 if job["state"] != qm.RUNNING:
                     continue
+                note = "no live render process at startup"
                 if job["id"] == st.get("running") and pid_alive(pid):
-                    continue        # genuinely still rendering (app restarted alone)
-                qm.set_state(job["id"], qm.INTERRUPTED,
-                             note="no live render process at startup")
+                    kill_tree(pid)
+                    note = ("orphaned render killed at startup (server had "
+                            "crashed; the render could no longer be supervised)")
+                qm.set_state(job["id"], qm.INTERRUPTED, note=note)
                 found.append(job["id"])
             if found:
                 st["running"] = None
@@ -52,11 +60,21 @@ class Controller:
         return found
 
     def recover_and_resume(self):
-        """Recovery + auto-resume. This is what runs at boot after a power cut."""
+        """
+        Recovery + auto-resume. This is what runs at boot after a power cut.
+
+        Only auto-starts when something was actually interrupted: a job that
+        was queued but never started stays queued, so merely launching the
+        server never fires up the GPU on its own.
+        """
         found = self.recover()
-        for job_id in found:
-            qm.resume(job_id)
-        started = self.start_next()
+        started = None
+        if found:
+            for job_id in found:
+                qm.resume(job_id)
+            started = self.start_next()
+            if started:
+                self.notify("resumed_after_boot", started)
         return found, started
 
     # ── control ──────────────────────────────────────────────────────────

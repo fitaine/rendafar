@@ -1,7 +1,7 @@
-# ── Never publish ────────────────────────────────────────────────────────────
+﻿# ── Never publish ────────────────────────────────────────────────────────────
 
 # Telegram token and anything else with a credential in it.
-secrets.py
+secrets_local.py
 
 # Local paths (Blender location, port). Copy config.example.py → config.py.
 config.py

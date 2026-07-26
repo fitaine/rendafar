@@ -61,6 +61,13 @@ PORT = 8765
 # change this if you have deliberately put an authenticating proxy in front.
 HOST = "127.0.0.1"
 
+# Public hostname served by your Cloudflare Tunnel (e.g. "render.example.com").
+# When set, requests arriving with that Host header must carry Cloudflare
+# Access's Cf-Access-Jwt-Assertion header or they are rejected — a fail-closed
+# guard against the tunnel being live with the Access policy missing.
+# Leave empty if you are not using Cloudflare.
+PUBLIC_HOSTNAME = ""
+
 
 def ensure_dirs():
     for d in (FROZEN_DIR, QUEUE_DIR, LOGS_DIR):
