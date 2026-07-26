@@ -1,5 +1,5 @@
 @echo off
-:: Rendafar — drag a .blend file onto this to queue a render.
+rem Rendafar - drag a .blend file onto this to queue a render.
 title Rendafar - new job
 cd /d "%~dp0"
 python new_job.py %1

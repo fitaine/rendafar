@@ -73,6 +73,15 @@ def parse_progress_line(line):
     return d
 
 
+# Absolute paths, never bare names: this machine's PATH has already been seen
+# with all its System32 entries stripped by an installer, which silently turns
+# "taskkill" into FileNotFoundError — and with it the Stop button and crash
+# detection.  Stop and recovery must not depend on the health of PATH.
+_SYS32    = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+_TASKLIST = os.path.join(_SYS32, "tasklist.exe")
+_TASKKILL = os.path.join(_SYS32, "taskkill.exe")
+
+
 def pid_alive(pid, image="blender.exe"):
     """
     True if `pid` is running and is the expected executable.
@@ -85,7 +94,7 @@ def pid_alive(pid, image="blender.exe"):
         return False
     try:
         out = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
+            [_TASKLIST, "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, timeout=15,
         ).stdout
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -101,7 +110,7 @@ def kill_tree(pid):
     the GPU — the next job would then start against a busy device.
     """
     try:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+        subprocess.run([_TASKKILL, "/F", "/T", "/PID", str(pid)],
                        capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         pass
