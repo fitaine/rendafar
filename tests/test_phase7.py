@@ -79,6 +79,11 @@ check("page registers /sw.js, not /static/sw.js",
 man = json.loads(get("/static/manifest.webmanifest")[1])
 check("manifest has an id", man.get("id") == "/", str(man.get("id")))
 check("scope covers the app", man.get("scope") == "/")
+check("manifest link uses credentials",
+      'rel="manifest"' in html and 'crossorigin="use-credentials"' in html,
+      "without it the manifest is fetched with credentials omitted, so behind "
+      "Cloudflare Access the browser gets the login page instead of the JSON "
+      "and the app is not installable")
 
 print("\n=== 2. file browser ===")
 scenes = os.path.join(TMP, "scenes", "alps")

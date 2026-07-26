@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0B0F14">
-<link rel="manifest" href="/static/manifest.webmanifest">
+<!-- crossorigin="use-credentials" is required, not optional, when the app sits
+     behind an authenticating proxy such as Cloudflare Access. By spec the
+     manifest is fetched with credentials mode "omit", so without this the
+     browser sends no session cookie, Access answers with its HTML login page
+     instead of the JSON, and the site is judged not installable — which is
+     exactly why Android only ever offered a plain home-screen shortcut. -->
+<link rel="manifest" href="/static/manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" href="/static/rendafar.ico" sizes="any">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
