@@ -1,0 +1,41 @@
+# ── Never publish ────────────────────────────────────────────────────────────
+
+# Telegram token and anything else with a credential in it.
+secrets.py
+
+# Local paths (Blender location, port). Copy config.example.py → config.py.
+config.py
+
+# PLAN.md is the internal design + infrastructure document. It names the
+# machine, the domain, the account the Access policy allows, and the hardware.
+# None of that helps a reader and all of it helps an attacker. Stays local;
+# README.md carries the architecture story instead.
+PLAN.md
+
+# ── Live state — paths to personal work, not code ────────────────────────────
+
+# Job files hold absolute paths to .blend files and render folders.
+queue/
+# Blender stdout, which is full of those same paths.
+logs/
+
+# ── Render output ────────────────────────────────────────────────────────────
+tiles/
+**/tile_r*.jpg
+**/tile_r*.png
+**/tile_r*.webp
+**/manifest.json
+**/render_stats.txt
+**/render_timing.json
+**/render_snapshot.json
+**/grid_preview.png
+**/_preview_*/
+
+# ── Python / OS ──────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.DS_Store
+Thumbs.db
+desktop.ini

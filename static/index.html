@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0B0F14">
+<title>Rendafar</title>
+<style>
+/* ── Palette: hypsometric. Deep slate ground, glacier for finished tiles,
+     amber reserved for the single thing happening right now. ─────────────── */
+:root{
+  --bg:#0B0F14; --panel:#121A23; --panel-2:#0F161E;
+  --line:#1F2A36; --line-soft:#18212B;
+  --ink:#E8EFF5; --dim:#8194A6; --faint:#5A6B7C;
+  --glacier:#9FD4E8; --glacier-dim:#3C6478;
+  --amber:#FFB13B; --rock:#243040;
+  --alert:#E5534B; --good:#68C08A;
+  /* One hue per kind of render. Chosen away from amber (which means "happening
+     now") and red (which means "wrong"), so a kind is never mistaken for a state. */
+  --k-tiled:#9FD4E8;      /* 120k tiled — glacier, the flagship renders */
+  --k-anim:#B0A7E6;       /* animation  — periwinkle */
+  --k-still:#86BE86;      /* single still — moss */
+  --display:"Bahnschrift","DIN Alternate","Segoe UI Variable Display",system-ui,sans-serif;
+  --body:"Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:"Cascadia Mono",Consolas,"SF Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--body);
+  font-size:15px; line-height:1.5;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:2px solid var(--amber); outline-offset:2px}
+
+.wrap{max-width:1180px; margin:0 auto; padding:14px 14px 60px}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.top{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+     padding-bottom:12px; border-bottom:1px solid var(--line)}
+.brand{font-family:var(--display); font-size:19px; letter-spacing:.14em;
+       text-transform:uppercase; font-weight:600}
+.host{font-family:var(--mono); font-size:11px; color:var(--faint); margin-left:auto}
+
+/* ── Status line ────────────────────────────────────────────────────────── */
+.status{display:flex; align-items:center; gap:10px; margin:18px 0 6px; flex-wrap:wrap}
+.dot{width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none}
+.state-rendering .dot{background:var(--amber); animation:pulse 1.8s ease-in-out infinite}
+.state-done      .dot{background:var(--good)}
+.state-failed    .dot{background:var(--alert)}
+.state-offline   .dot{background:var(--alert)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.state-label{font-family:var(--display); font-size:12px; letter-spacing:.2em;
+             text-transform:uppercase; color:var(--dim)}
+.jobname{font-family:var(--display); font-size:clamp(24px,6vw,38px);
+         line-height:1.1; font-weight:600; margin:2px 0 4px; width:100%}
+.jobmeta{font-family:var(--mono); font-size:11.5px; color:var(--faint);
+         width:100%; word-break:break-all}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.cols{display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px}
+@media(min-width:900px){ .cols{grid-template-columns:1.15fr .85fr; align-items:start} }
+
+.card{background:var(--panel); border:1px solid var(--line); border-radius:10px;
+      padding:14px}
+.card + .card{margin-top:14px}
+.card-title{font-family:var(--display); font-size:11px; letter-spacing:.18em;
+            text-transform:uppercase; color:var(--dim); margin:0 0 12px;
+            display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+.card-title .aside{font-family:var(--mono); font-size:11px; color:var(--faint);
+                   letter-spacing:0; text-transform:none}
+
+/* ── Signature: the tile grid, the shape of the render itself ───────────── */
+#grid{width:100%; height:auto; display:block; image-rendering:pixelated;
+      background:var(--panel-2); border-radius:4px}
+.legend{display:flex; gap:14px; margin-top:10px; font-size:11px; color:var(--faint);
+        font-family:var(--mono); flex-wrap:wrap}
+.legend i{width:9px; height:9px; border-radius:2px; display:inline-block;
+          margin-right:5px; vertical-align:-1px}
+
+/* ── Numbers ────────────────────────────────────────────────────────────── */
+.stats{display:grid; grid-template-columns:repeat(2,1fr); gap:1px;
+       background:var(--line-soft); border:1px solid var(--line-soft); border-radius:8px;
+       overflow:hidden}
+@media(min-width:520px){ .stats{grid-template-columns:repeat(4,1fr)} }
+.stat{background:var(--panel-2); padding:11px 12px}
+.stat b{display:block; font-family:var(--mono); font-size:19px; font-weight:600;
+        color:var(--ink); letter-spacing:-.02em}
+.stat span{display:block; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+           color:var(--faint); margin-top:3px}
+.stat.accent b{color:var(--amber)}
+
+/* ── Tile preview ───────────────────────────────────────────────────────── */
+#tileimg{width:100%; border-radius:6px; display:block; background:var(--panel-2);
+         border:1px solid var(--line-soft)}
+.noimg{color:var(--faint); font-family:var(--mono); font-size:12px; padding:26px 0;
+       text-align:center}
+
+/* ── GPU ────────────────────────────────────────────────────────────────── */
+.meter{height:6px; background:var(--rock); border-radius:3px; overflow:hidden; margin:7px 0 3px}
+.meter i{display:block; height:100%; background:var(--glacier); border-radius:3px;
+         transition:width .5s ease}
+.meter.warn i{background:var(--amber)}
+.meter.hot  i{background:var(--alert)}
+.meter.live i{background:var(--amber); transition:width .3s linear}
+
+/* ── Live progress inside the current frame/tile ─────────────────────────── */
+.livebox{margin-top:13px; padding-top:13px; border-top:1px solid var(--line-soft)}
+.livehead{display:flex; justify-content:space-between; align-items:baseline;
+          gap:8px; font-family:var(--display); font-size:11px; letter-spacing:.16em;
+          text-transform:uppercase; color:var(--dim); margin-bottom:8px}
+.livehead b{font-family:var(--mono); font-size:12px; letter-spacing:0;
+            text-transform:none; color:var(--amber)}
+.livefacts{display:flex; gap:16px; flex-wrap:wrap; margin-top:7px;
+           font-family:var(--mono); font-size:11.5px; color:var(--faint)}
+.livefacts b{color:var(--ink); font-weight:600}
+.gpurow{display:flex; justify-content:space-between; font-family:var(--mono);
+        font-size:12px; color:var(--dim)}
+.gpurow b{color:var(--ink); font-weight:600}
+.gpu-block + .gpu-block{margin-top:12px}
+.warning{margin-top:12px; padding:10px 12px; border-radius:7px; font-size:13px;
+         background:rgba(255,177,59,.09); border:1px solid rgba(255,177,59,.35);
+         color:#F3D6A6; line-height:1.45}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.actions{display:flex; gap:9px; flex-wrap:wrap; margin:16px 0 0}
+button{font-family:var(--display); font-size:13px; letter-spacing:.1em;
+       text-transform:uppercase; padding:11px 17px; border-radius:7px;
+       border:1px solid var(--line); background:var(--panel); color:var(--ink);
+       cursor:pointer; min-height:44px; transition:border-color .15s,background .15s}
+button:hover:not(:disabled){border-color:var(--glacier-dim); background:#16202B}
+button:disabled{opacity:.35; cursor:not-allowed}
+button.primary{background:var(--glacier); color:#08131A; border-color:var(--glacier);
+               font-weight:600}
+button.primary:hover:not(:disabled){background:#B6E0F0; border-color:#B6E0F0}
+button.danger{border-color:rgba(229,83,75,.5); color:#F2A19C}
+button.danger:hover:not(:disabled){background:rgba(229,83,75,.12);
+                                   border-color:var(--alert)}
+button.mini{font-size:11px; padding:6px 10px; min-height:34px; letter-spacing:.06em}
+
+/* ── Render kind ────────────────────────────────────────────────────────── */
+.kind{font-family:var(--mono); font-size:9.5px; letter-spacing:.1em;
+      text-transform:uppercase; padding:3px 7px; border-radius:4px; flex:none;
+      border:1px solid currentColor}
+.k-tiled{color:var(--k-tiled)}
+.k-anim {color:var(--k-anim)}
+.k-still{color:var(--k-still)}
+.jobname.k-tiled,.jobname.k-anim,.jobname.k-still{color:var(--ink)}
+.kindbar{width:3px; align-self:stretch; border-radius:2px; flex:none;
+         background:currentColor; min-height:34px}
+
+/* ── Queue ──────────────────────────────────────────────────────────────── */
+.job{display:flex; align-items:center; gap:11px; padding:11px 0;
+     border-top:1px solid var(--line-soft); flex-wrap:wrap}
+.job:first-of-type{border-top:0}
+.badge{font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase;
+       padding:3px 7px; border-radius:4px; border:1px solid var(--line);
+       color:var(--dim); flex:none}
+.badge.running{color:var(--amber); border-color:rgba(255,177,59,.45)}
+.badge.done{color:var(--good); border-color:rgba(104,192,138,.4)}
+.badge.failed,.badge.interrupted{color:var(--alert); border-color:rgba(229,83,75,.45)}
+.job-main{flex:1 1 190px; min-width:0}
+.job-name{font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.job-sub{font-family:var(--mono); font-size:10.5px; color:var(--faint);
+         overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.job-acts{display:flex; gap:6px; flex:none}
+
+/* ── Log ────────────────────────────────────────────────────────────────── */
+.logbox{background:#080C11; border:1px solid var(--line-soft); border-radius:8px;
+        padding:11px 12px; font-family:var(--mono); font-size:11.5px; line-height:1.65;
+        color:var(--dim); height:290px; overflow:auto; white-space:pre-wrap;
+        word-break:break-word; overscroll-behavior:contain}
+.logbox .hl{color:var(--glacier)}
+.logbox .err{color:var(--alert)}
+
+.empty{color:var(--faint); font-size:14px; padding:8px 0 2px; line-height:1.6}
+.empty code{font-family:var(--mono); font-size:12px; color:var(--dim);
+            background:var(--panel-2); padding:2px 6px; border-radius:4px}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none !important; transition:none !important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">Rendafar</div>
+    <div class="host" id="host">connecting…</div>
+  </div>
+
+  <div class="status" id="statusline">
+    <span class="dot"></span>
+    <span class="state-label" id="statelabel">Connecting</span>
+    <div class="jobname" id="jobname">—</div>
+    <div class="jobmeta" id="jobmeta"></div>
+  </div>
+
+  <div class="actions" id="actions"></div>
+
+  <div class="cols">
+    <div>
+      <div class="card" id="gridcard">
+        <h2 class="card-title" id="gridtitle">Tile map <span class="aside" id="gridaside"></span></h2>
+        <canvas id="grid"></canvas>
+        <div class="legend">
+          <span><i id="legend-done" style="background:var(--k-tiled)"></i>rendered</span>
+          <span><i style="background:var(--amber)"></i>newest</span>
+          <span><i style="background:var(--rock)"></i>pending</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Progress</h2>
+        <div class="stats" id="stats"></div>
+        <div id="live"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Blender output <span class="aside" id="logaside">live</span></h2>
+        <div class="logbox" id="log">Waiting for output…</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2 class="card-title" id="tiletitle">Latest image <span class="aside" id="tileaside"></span></h2>
+        <div id="tilewrap"><div class="noimg">Nothing rendered yet</div></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">GPU <span class="aside" id="gpuname"></span></h2>
+        <div id="gpu"><div class="noimg">Reading…</div></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Queue <span class="aside" id="queueaside"></span></h2>
+        <div id="queue"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let LAST = null, tileStamp = 0, logPinned = true;
+
+const hms = s => {
+  if (s == null || isNaN(s)) return "—";
+  if (s < 10)  return (Math.round(s*10)/10) + "s";   // fast tiles: 0.4s, not 0m 00s
+  if (s < 60)  return Math.round(s) + "s";
+  s = Math.round(s);
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60);
+  return h ? `${h}h ${String(m).padStart(2,"0")}m` : `${m}m ${String(s%60).padStart(2,"0")}s`;
+};
+
+/* Tile map — the render's own shape, filling in as tiles land. */
+const KIND_COLOR = {"k-tiled":"#9FD4E8", "k-anim":"#B0A7E6", "k-still":"#86BE86"};
+
+function drawGrid(tiles, lastName, kindCls){
+  const cv = $("grid"), card = $("gridcard");
+  if (!tiles){ card.style.display = "none"; return; }
+  card.style.display = "";
+  const doneColor = KIND_COLOR[kindCls] || KIND_COLOR["k-tiled"];
+  const {cols, rows, grid} = tiles;
+  // Drawn oversampled and scaled down by CSS: crisp cell edges on retina
+  // phones. Capped so a 24×24 grid doesn't balloon into dinner plates on a
+  // wide screen, while still filling the width on a phone.
+  const CELL = 16, GAP = 2;
+  cv.width  = cols * CELL;
+  cv.height = rows * CELL;
+  cv.style.maxWidth = Math.min(640, cols * 24) + "px";
+  const x = cv.getContext("2d");
+  x.fillStyle = "#0F161E"; x.fillRect(0,0,cv.width,cv.height);
+
+  let newest = -1;
+  if (lastName){
+    const m = /tile_r(\d+)_c(\d+)/.exec(lastName);
+    if (m) newest = (+m[1]) * cols + (+m[2]);
+  }
+  for (let i = 0; i < cols*rows; i++){
+    const done = grid[i] === "1";
+    x.fillStyle = i === newest && done ? "#FFB13B" : done ? doneColor : "#243040";
+    x.fillRect((i%cols)*CELL, Math.floor(i/cols)*CELL, CELL-GAP, CELL-GAP);
+  }
+  $("legend-done").style.background = doneColor;
+  $("gridaside").textContent =
+    tiles.unit === "frames" ? `${cols*rows} frames` : `${cols} × ${rows}`;
+  $("gridtitle").firstChild.textContent =
+    tiles.unit === "frames" ? "Frame map " : "Tile map ";
+}
+
+function statRow(p){
+  if (!p) return `<div class="stat"><b>—</b><span>not started yet</span></div>`;
+  const unit = p.unit || "tiles";          // "tiles" or "frames"
+  return `
+    <div class="stat accent"><b>${p.percent}%</b><span>complete</span></div>
+    <div class="stat"><b>${p.done}<span style="color:var(--faint)">/${p.total}</span></b><span>${unit}</span></div>
+    <div class="stat"><b>${hms(p.eta_s)}</b><span>remaining</span></div>
+    <div class="stat"><b>${hms(p.avg_tile_s)}</b><span>per ${unit.slice(0,-1)}</span></div>`;
+}
+
+/* One render, three kinds. Derived in one place so the chip, the stripe and
+   the label can never disagree. */
+function kindOf(job){
+  if (!job) return {cls:"k-tiled", label:"—"};
+  if (job.type === "classic")
+    return (job.config && job.config.MODE === "still")
+      ? {cls:"k-still", label:"Still"}
+      : {cls:"k-anim",  label:"Animation"};
+  return {cls:"k-tiled", label:"Tiled 120k"};
+}
+
+/* Progress WITHIN the current frame or tile, straight from Cycles.
+   Blender's sample counter restarts on every Cycles tile, so the honest
+   percentage is (tiles done + fraction of the current tile) / tiles total —
+   computed server-side in runner.parse_progress_line. */
+function liveBlock(live){
+  if (!live) return "";
+  const facts = [];
+  if (live.cy_total)
+    facts.push(`<span>Cycles tiles <b>${live.cy_done}/${live.cy_total}</b></span>`);
+  if (live.samples_total)
+    facts.push(`<span>samples <b>${live.sample}/${live.samples_total}</b></span>`);
+  if (live.remaining)
+    facts.push(`<span>Blender says <b>${live.remaining}</b> left</span>`);
+  if (live.frame != null)
+    facts.push(`<span>frame <b>${live.frame}</b></span>`);
+  return `<div class="livebox">
+    <div class="livehead"><span>Current frame</span><b>${live.percent ?? 0}%</b></div>
+    <div class="meter live"><i style="width:${Math.min(100, live.percent||0)}%"></i></div>
+    <div class="livefacts">${facts.join("")}</div>
+  </div>`;
+}
+
+function gpuBlock(g){
+  if (!g || !g.available)
+    return `<div class="noimg">${g && g.error ? g.error : "unavailable"}</div>`;
+  const bar = (label, val, unit, pct, cls="") => `
+    <div class="gpu-block">
+      <div class="gpurow"><span>${label}</span><b>${val}${unit}</b></div>
+      <div class="meter ${cls}"><i style="width:${Math.min(100,pct||0)}%"></i></div>
+    </div>`;
+  // Amber the power bar only when the reading is actually a problem, so a
+  // light scene idling the GPU doesn't look alarming.
+  const powerCls = g.warning ? "warn" : "";
+  const tempCls  = g.temp_c > 80 ? "hot" : "";
+  return bar("Power", Math.round(g.power_w), ` W`, g.power_pct, powerCls)
+       + bar("Temperature", Math.round(g.temp_c), " °C", (g.temp_c/95)*100, tempCls)
+       + bar("VRAM", (g.vram_used/1024).toFixed(1), ` / ${(g.vram_total/1024).toFixed(0)} GB`, g.vram_pct)
+       + bar("Utilisation", Math.round(g.util_pct), " %", g.util_pct)
+       + (g.warning ? `<div class="warning">${g.warning}</div>` : "");
+}
+
+function queueList(jobs, runningId){
+  if (!jobs.length)
+    return `<div class="empty">Nothing queued.<br>Add a render on the PC with <code>NEW JOB.bat</code>.</div>`;
+  return jobs.map(j => {
+    const running = j.id === runningId;
+    const resumable = ["stopped","failed","interrupted"].includes(j.state);
+    const k = kindOf(j);
+    return `<div class="job">
+      <span class="kindbar ${k.cls}"></span>
+      <span class="kind ${k.cls}">${k.label}</span>
+      <span class="badge ${j.state}">${j.state}</span>
+      <div class="job-main">
+        <div class="job-name">${j.name}</div>
+        <div class="job-sub">${j.output_dir || j.blend}</div>
+      </div>
+      <div class="job-acts">
+        ${resumable ? `<button class="mini" onclick="act('resume','${j.id}')">Resume</button>` : ""}
+        ${!running && j.state === "queued" ? `<button class="mini" onclick="act('move','${j.id}',-1)">↑</button>` : ""}
+        ${!running ? `<button class="mini" onclick="removeJob('${j.id}')">Remove</button>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function actions(s){
+  const b = [];
+  if (s.busy)
+    b.push(`<button class="danger" onclick="act('stop')">Stop render</button>`);
+  else if (s.next_id)
+    b.push(`<button class="primary" onclick="act('start')">Start next job</button>`);
+  $("actions").innerHTML = b.join("");
+}
+
+function paintLog(lines){
+  const box = $("log");
+  logPinned = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  box.innerHTML = (lines && lines.length ? lines : ["Waiting for output…"])
+    .map(l => {
+      const e = l.replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+      if (/ERROR|Traceback|!!/.test(l)) return `<span class="err">${e}</span>`;
+      if (/↳|ETA|tiles rendered/.test(l)) return `<span class="hl">${e}</span>`;
+      return e;
+    }).join("\n");
+  if (logPinned) box.scrollTop = box.scrollHeight;
+}
+
+async function tick(){
+  let s;
+  try{
+    s = await (await fetch("/api/status", {cache:"no-store"})).json();
+  }catch(e){
+    $("statusline").className = "status state-offline";
+    $("statelabel").textContent = "No connection";
+    $("jobname").textContent = "Can't reach the render PC";
+    $("jobmeta").textContent = "It may be asleep, rebooting, or off the network.";
+    return;
+  }
+  LAST = s;
+  const job = s.job;
+  const state = s.busy ? "rendering" : (job ? job.state : "idle");
+
+  const k = kindOf(job);
+  $("statusline").className = "status state-" + state;
+  $("statelabel").innerHTML =
+    (job ? `<span class="kind ${k.cls}">${k.label}</span>&nbsp;&nbsp;` : "") +
+    (s.busy ? "Rendering" : job ? job.state : (s.next_id ? "Ready" : "Idle"));
+  $("jobname").textContent =
+    job ? job.name : (s.next_id ? "Nothing running" : "No renders queued");
+  $("jobmeta").textContent = job
+    ? `${s.output_dir || ""}   ·   session ${hms(s.session_s)}`
+    : "";
+  $("host").textContent = location.host;
+
+  drawGrid(s.tiles, s.last_tile && s.last_tile.name, k.cls);
+  $("stats").innerHTML = statRow(s.progress);
+  $("live").innerHTML  = liveBlock(s.live);
+  $("gpu").innerHTML   = gpuBlock(s.gpu);
+  $("gpuname").textContent = s.gpu && s.gpu.name ? s.gpu.name : "";
+  $("queue").innerHTML = queueList(s.queue || [], s.job_id);
+  $("queueaside").textContent = (s.queue || []).length + " jobs";
+  actions(s);
+  paintLog(s.log);
+
+  if (s.last_tile){
+    $("tileaside").textContent = `${s.last_tile.name} · ${s.last_tile.age_s}s ago`;
+    if (s.last_tile.mtime !== tileStamp){
+      tileStamp = s.last_tile.mtime;
+      $("tilewrap").innerHTML =
+        `<img id="tileimg" alt="Most recent tile rendered" src="/api/tile?t=${tileStamp}">`;
+    }
+  }
+}
+
+async function act(what, jobId, offset){
+  const body = {};
+  if (jobId) body.job_id = jobId;
+  if (offset !== undefined) body.offset = offset;
+  const r = await fetch("/api/" + what, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (d.error) alert(d.error);
+  tick();
+}
+
+function removeJob(id){
+  if (confirm("Remove this job from the queue?\n\nRendered tiles stay on disk."))
+    act("remove", id);
+}
+
+tick();
+setInterval(tick, 3000);
+</script>
+</body>
+</html>
