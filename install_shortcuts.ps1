@@ -1,0 +1,55 @@
+# Creates the Rendafar shortcuts: Desktop and Start Menu.
+#
+# Start Menu is what makes it findable in Windows search and pinnable to the
+# taskbar. No admin needed - both locations are per-user.
+#
+# The shortcut runs pythonw.exe (no console) on app_launcher.pyw, which starts
+# the server hidden and opens the UI in its own window.
+
+$ErrorActionPreference = "Stop"
+$app = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Prefer the interpreter pinned in local_python.bat, so the shortcut uses the
+# same Python as everything else on this machine.
+$python = $null
+$localBat = Join-Path $app "local_python.bat"
+if (Test-Path $localBat) {
+    $line = Select-String -Path $localBat -Pattern 'set\s+"PYTHON=(.+)"' -ErrorAction SilentlyContinue
+    if ($line) { $python = $line.Matches[0].Groups[1].Value }
+}
+if (-not $python) { $python = (Get-Command python -ErrorAction SilentlyContinue).Source }
+if (-not $python) { throw "Could not find Python. Create local_python.bat first." }
+
+# pythonw.exe = same interpreter, no console window.
+$pythonw = Join-Path (Split-Path $python -Parent) "pythonw.exe"
+if (-not (Test-Path $pythonw)) { $pythonw = $python }
+
+$target  = Join-Path $app "app_launcher.pyw"
+$icon    = Join-Path $app "static\rendafar.ico"
+if (-not (Test-Path $icon)) { throw "Icon missing. Run: python make_icon.py" }
+
+function New-RendafarShortcut($path) {
+    $ws = New-Object -ComObject WScript.Shell
+    $s  = $ws.CreateShortcut($path)
+    $s.TargetPath       = $pythonw
+    $s.Arguments        = "`"$target`""
+    $s.WorkingDirectory = $app
+    $s.IconLocation     = "$icon,0"
+    $s.Description      = "Watch and steer Blender renders"
+    $s.WindowStyle      = 1
+    $s.Save()
+    Write-Host "  created  $path"
+}
+
+$desktop = [Environment]::GetFolderPath("Desktop")
+$start   = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+
+New-RendafarShortcut (Join-Path $desktop "Rendafar.lnk")
+New-RendafarShortcut (Join-Path $start   "Rendafar.lnk")
+
+Write-Host ""
+Write-Host "  Python : $pythonw"
+Write-Host "  Icon   : $icon"
+Write-Host ""
+Write-Host "  Rendafar is now on your Desktop and in the Start menu."
+Write-Host "  To pin it: press Start, type Rendafar, right-click it, Pin to taskbar."

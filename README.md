@@ -89,6 +89,40 @@ reorders them; it deliberately cannot create them.
 
 ---
 
+## It is a local tool first
+
+Nothing here requires the internet. Rendafar binds `127.0.0.1` and the tunnel is an
+optional extra — plenty of people will only ever use it on the machine that renders:
+
+- a queue, so several renders run back to back overnight instead of you starting each one
+- resume after a crash, a stop, or a power cut, down to the exact tile or frame
+- a Quit button, a tile map, GPU telemetry, and Blender's output in a readable window
+
+Remote access is a bolt-on. Skip the Cloudflare section entirely and everything above
+still works.
+
+### As a desktop app (Windows)
+
+```bat
+python make_icon.py
+INSTALL SHORTCUTS.bat
+```
+
+Puts Rendafar on the Desktop and in the Start menu with its own icon. Launching it starts
+the server hidden and opens the UI in a chrome-less window with its own taskbar button —
+right-click it there to pin it. Since there is no console to close, the UI carries a
+**Quit** button; it refuses while a render is running, because quitting would leave
+Blender unsupervised.
+
+Quit only appears when you are at the machine. From the phone it is hidden on purpose:
+stopping the server remotely could not be undone remotely.
+
+### On Android
+
+Open your Rendafar URL in Chrome and choose **Install app**. You get an icon in the app
+drawer and a standalone window. The service worker deliberately caches nothing — a cached
+"all good" for a render that died an hour ago is worse than no answer at all.
+
 ## How it works
 
 ```

@@ -128,6 +128,17 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass                       # the console belongs to render output
 
+    def _is_local(self):
+        """
+        True when the browser is on this machine.
+
+        Judged by the Host header, not the client IP: tunnel traffic arrives
+        from cloudflared on 127.0.0.1 too, so the source address cannot tell
+        local from remote. The hostname can.
+        """
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        return host in ("127.0.0.1", "localhost", "::1", "")
+
     def _access_ok(self):
         """
         Fail closed if the Cloudflare tunnel is live without Access in front.
@@ -174,7 +185,13 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/", "/index.html"):
                 return self._static("index.html")
             if path == "/api/status":
-                return self._json(build_status())
+                st = build_status()
+                # Quitting from the phone would be a one-way door: the server
+                # would stop, and nothing can start it remotely (boot_check
+                # only runs at logon, and only for an interrupted render). So
+                # the UI only offers Quit when you are at the machine.
+                st["local"] = self._is_local()
+                return self._json(st)
             if path == "/api/log":
                 n = int(parse_qs(u.query).get("n", ["400"])[0])
                 return self._json({"lines": controller.runner.log_tail(n)})
@@ -210,6 +227,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/remove":
                 qm.remove(body["job_id"])
                 return self._json({"removed": body["job_id"]})
+            if path == "/api/quit":
+                return self._quit(force=bool(body.get("force")))
             return self._send(404, "not found")
         except (KeyError, ValueError, RuntimeError, FileNotFoundError) as e:
             return self._json({"error": str(e)}, 400)
@@ -219,6 +238,43 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
 
     # -- handlers --
+
+    def _quit(self, force=False):
+        """
+        Shut Rendafar down.
+
+        Launched from the desktop icon there is no console to close, so this is
+        the way out. It refuses while a render is running: killing the
+        supervisor would leave Blender rendering with nothing watching it,
+        nothing to finalise the job, and nothing to start the next one — the
+        orphan situation that cost us a debugging session in Phase 3.
+
+        `force` is the deliberate path: stop the render first, then quit.
+        """
+        if controller.runner.is_busy():
+            if not force:
+                job = controller.runner.status().get("job") or {}
+                return self._json({
+                    "quit": False,
+                    "rendering": True,
+                    "job": job.get("name"),
+                    "error": "A render is running. Quitting would leave it "
+                             "unsupervised.",
+                }, 409)
+            controller.stop()
+
+        self._json({"quit": True})
+
+        def _shutdown():
+            # From another thread: serve_forever() cannot be stopped from
+            # inside the request currently being handled.
+            self.server.shutdown()
+            # server_close() releases the listening socket. Without it the port
+            # stays bound until the process exits, and relaunching from the
+            # desktop icon would fail to bind.
+            self.server.server_close()
+
+        threading.Thread(target=_shutdown, daemon=True).start()
 
     def _tile(self):
         st  = controller.status()
@@ -271,6 +327,7 @@ def main():
     print("  Ctrl+C to stop the server (renders keep running)\n")
     try:
         srv.serve_forever()
+        print("\n  Rendafar stopped.")
     except KeyboardInterrupt:
         print("\n  server stopped — any running render continues")
 

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0B0F14">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="icon" href="/static/rendafar.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
 <title>Rendafar</title>
 <style>
 /* ── Palette: hypsometric. Deep slate ground, glacier for finished tiles,
@@ -175,6 +179,12 @@ button.mini{font-size:11px; padding:6px 10px; min-height:34px; letter-spacing:.0
 .logbox .hl{color:var(--glacier)}
 .logbox .err{color:var(--alert)}
 
+/* ── Quit ───────────────────────────────────────────────────────────────── */
+.quit{margin-left:auto}
+.quitwrap{margin-top:26px; padding-top:16px; border-top:1px solid var(--line-soft);
+          display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+.quitnote{font-size:12px; color:var(--faint); flex:1 1 200px; line-height:1.5}
+
 .empty{color:var(--faint); font-size:14px; padding:8px 0 2px; line-height:1.6}
 .empty code{font-family:var(--mono); font-size:12px; color:var(--dim);
             background:var(--panel-2); padding:2px 6px; border-radius:4px}
@@ -241,6 +251,13 @@ button.mini{font-size:11px; padding:6px 10px; min-height:34px; letter-spacing:.0
         <div id="queue"></div>
       </div>
     </div>
+  </div>
+
+  <div class="quitwrap" id="quitwrap" hidden>
+    <span class="quitnote" id="quitnote">
+      Closing this window leaves Rendafar running in the background.
+    </span>
+    <button class="quit" onclick="quitApp()">Quit Rendafar</button>
   </div>
 </div>
 
@@ -433,6 +450,9 @@ async function tick(){
   $("live").innerHTML  = liveBlock(s.live);
   $("gpu").innerHTML   = gpuBlock(s.gpu);
   $("gpuname").textContent = s.gpu && s.gpu.name ? s.gpu.name : "";
+  // Quit is offered only at the machine: shutting the server down from the
+  // phone could not be undone remotely.
+  $("quitwrap").hidden = !s.local;
   $("queue").innerHTML = queueList(s.queue || [], s.job_id);
   $("queueaside").textContent = (s.queue || []).length + " jobs";
   actions(s);
@@ -466,8 +486,46 @@ function removeJob(id){
     act("remove", id);
 }
 
+/* Quitting is refused while a render runs: without a supervisor, Blender would
+   keep going with nothing to finalise the job or start the next one. Stopping
+   the render first is offered explicitly rather than done silently. */
+async function quitApp(force){
+  const r = await fetch("/api/quit", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(force ? {force:true} : {})
+  });
+  const d = await r.json().catch(()=>({}));
+
+  if (d.rendering && !force){
+    const ok = confirm(
+      `“${d.job}” is rendering right now.\n\n` +
+      `Quitting stops the render — the tile in progress is discarded and ` +
+      `re-rendered when you resume.\n\nStop the render and quit?`);
+    if (ok) return quitApp(true);
+    return;
+  }
+  if (d.quit) showStopped();
+}
+
+function showStopped(){
+  clearInterval(POLL);
+  document.body.innerHTML =
+    `<div class="wrap"><div class="top"><div class="brand">Rendafar</div></div>
+       <div class="status"><span class="dot"></span>
+         <span class="state-label">Stopped</span>
+         <div class="jobname">Rendafar is not running</div>
+         <div class="jobmeta">You can close this window. Start it again from the
+           desktop icon.</div>
+       </div></div>`;
+}
+
+/* Registered only so Chrome offers "Install app" on Android. It caches nothing
+   — see sw.js. */
+if ("serviceWorker" in navigator && location.protocol === "https:")
+  navigator.serviceWorker.register("/static/sw.js").catch(()=>{});
+
 tick();
-setInterval(tick, 3000);
+const POLL = setInterval(tick, 3000);
 </script>
 </body>
 </html>
