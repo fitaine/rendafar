@@ -14,11 +14,14 @@ a window onto the one that exists. Two servers would fight over the port, and
 worse, over the GPU.
 """
 
+import glob
+import json
 import os
 import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -94,20 +97,67 @@ def wait_for_server(seconds=25):
     return False
 
 
-def open_window():
+def installed_app_id():
     """
-    Open the UI in an app-mode window, falling back to the default browser.
+    The Chrome/Edge app id if Rendafar has been installed as a web app.
 
-    --app strips the browser furniture and gives the window its own taskbar
-    button, which is what makes it feel like an application.
+    Worth the trouble: a window opened with --app=<url> belongs to chrome.exe,
+    so Windows shows CHROME's icon in the taskbar and groups it with Chrome.
+    A window opened with --app-id=<installed id> belongs to the installed app,
+    which has its own icon and its own taskbar identity.
+
+    Read from the browser's own Preferences file rather than guessed, and
+    matched on start_url so it cannot pick up somebody else's app.
     """
+    roots = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "BraveSoftware",
+                     "Brave-Browser", "User Data"),
+    ]
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for prefs in glob.glob(os.path.join(root, "*", "Preferences")):
+            try:
+                with open(prefs, encoding="utf-8", errors="replace") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            apps = (data.get("web_apps") or {}).get("web_app_ids") or {}
+            for app_id, info in apps.items():
+                url = ""
+                if isinstance(info, dict):
+                    url = info.get("start_url") or ""
+                if url and str(config.PORT) in url and "127.0.0.1" in url:
+                    return app_id
+    return None
+
+
+def open_window(new_blend=None):
+    """
+    Open the UI in an app window, falling back to the default browser.
+
+    A .blend path is passed through as ?new=, so dropping a file on the desktop
+    icon opens the New render panel with it filled in — the one way to get a
+    real file path, since a web page is never allowed to see one.
+    """
+    url = URL
+    if new_blend:
+        url += "/?new=" + urllib.parse.quote(new_blend)
+
     browser = find_browser()
     if browser:
-        subprocess.Popen([browser, f"--app={URL}", "--window-size=1280,900"],
-                         close_fds=True)
+        app_id = installed_app_id()
+        if app_id and not new_blend:
+            # Installed app: correct icon, own taskbar identity.
+            subprocess.Popen([browser, f"--app-id={app_id}"], close_fds=True)
+        else:
+            subprocess.Popen([browser, f"--app={url}", "--window-size=1280,900"],
+                             close_fds=True)
         return True
     import webbrowser
-    webbrowser.open(URL)
+    webbrowser.open(url)
     return False
 
 
@@ -121,13 +171,21 @@ def error(msg):
 
 
 def main():
+    # Windows hands a dropped file to the shortcut as an argument. This is the
+    # only way to get a real path: a browser never reveals one, by design.
+    new_blend = None
+    for arg in sys.argv[1:]:
+        if arg.lower().endswith(".blend") and os.path.isfile(arg):
+            new_blend = os.path.abspath(arg)
+            break
+
     if not port_open():
         start_server()
         if not wait_for_server():
             error("Rendafar could not start.\n\n"
                   "Run START RENDAFAR.bat to see the error message.")
             return 1
-    open_window()
+    open_window(new_blend)
     return 0
 
 

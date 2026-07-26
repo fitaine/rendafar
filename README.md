@@ -109,10 +109,29 @@ INSTALL SHORTCUTS.bat
 ```
 
 Puts Rendafar on the Desktop and in the Start menu with its own icon. Launching it starts
-the server hidden and opens the UI in a chrome-less window with its own taskbar button —
-right-click it there to pin it. Since there is no console to close, the UI carries a
-**Quit** button; it refuses while a render is running, because quitting would leave
-Blender unsupervised.
+the server hidden and opens the UI in a chrome-less window. Since there is no console to
+close, the UI carries a **Quit** button; it refuses while a render is running, because
+quitting would leave Blender unsupervised.
+
+**For the taskbar icon to be Rendafar's own**, install it as an app once: in the Rendafar
+window, browser menu → *Install Rendafar…*. A window opened with `--app=<url>` belongs to
+the browser process, so Windows shows the browser's icon and groups it there; an installed
+app has its own icon and its own taskbar identity. The launcher detects the installed app
+afterwards and uses it automatically.
+
+### Adding a render
+
+Three ways, because a web page is never allowed to see a file's real path:
+
+- **Browse** — *+ New render* → *Browse…* picks the `.blend` server-side, so it works from
+  the phone too.
+- **Drag a `.blend` onto the Rendafar desktop icon** — Windows passes the full path, and
+  the New render panel opens with it filled in.
+- **`NEW JOB.bat`** — drag a `.blend` onto it for the terminal version.
+
+`<input type=file>` and dropping onto the page itself both give a filename and the file's
+*contents*, never its location — which is no use when Blender has to open the file where
+it lives.
 
 Quit only appears when you are at the machine. From the phone it is hidden on purpose:
 stopping the server remotely could not be undone remotely.

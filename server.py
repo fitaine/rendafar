@@ -25,6 +25,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import browse
 import config
 import gpu
 import notify
@@ -73,25 +74,53 @@ def tile_bitmap(job):
     return {"cols": cols, "rows": rows, "grid": grid.decode(), "unit": "tiles"}
 
 
-def thumbnail(path, mtime, max_px=1000):
-    """Downscaled JPEG of a render tile, cached on (path, mtime)."""
-    key = (path, mtime)
+def thumbnail(path, mtime, max_px=None):
+    """
+    Downscaled JPEG of a render image, cached on (path, mtime).
+
+    Returns (bytes, None) on success, or (None, reason) when the image is too
+    big to preview cheaply. Decoding happens on the machine that is rendering,
+    so an oversized image is refused rather than served at the cost of the
+    render it is meant to be showing.
+    """
+    max_px = max_px or config.PREVIEW_MAX_PX
+    key = (path, mtime, max_px)
     with _thumb_lock:
         if _thumb_cache["key"] == key:
-            return _thumb_cache["bytes"]
+            return _thumb_cache["bytes"], _thumb_cache.get("skip")
+
+    try:
+        mb = os.path.getsize(path) / (1024 * 1024)
+    except OSError:
+        return None, "unreadable"
+    if mb > config.PREVIEW_MAX_MB:
+        return None, f"{mb:.0f} MB file — preview skipped to spare the render"
+
+    data = skip = None
     try:
         from PIL import Image
         with Image.open(path) as im:
-            im = im.convert("RGB")
-            im.thumbnail((max_px, max_px), Image.LANCZOS)
-            buf = io.BytesIO()
-            im.save(buf, "JPEG", quality=86)
-            data = buf.getvalue()
-    except Exception:
-        return None
+            mp = (im.width * im.height) / 1_000_000
+            if mp > config.PREVIEW_MAX_MP:
+                skip = (f"{im.width}×{im.height} ({mp:.0f} MP) — preview skipped "
+                        f"to spare the render")
+            else:
+                # draft() lets the JPEG decoder work at 1/2, 1/4 or 1/8 scale,
+                # so a large JPEG never gets fully decoded. No-op for PNG/WebP.
+                im.draft("RGB", (max_px, max_px))
+                im = im.convert("RGB")
+                im.thumbnail((max_px, max_px), Image.LANCZOS)
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=86)
+                data = buf.getvalue()
+    except Exception as e:
+        return None, f"unreadable ({type(e).__name__})"
+
     with _thumb_lock:
-        _thumb_cache["key"], _thumb_cache["bytes"] = key, data
-    return data
+        _thumb_cache["key"] = key
+        _thumb_cache["bytes"] = data
+        _thumb_cache["skip"] = skip
+    return data, skip
 
 
 def build_status():
@@ -195,8 +224,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/log":
                 n = int(parse_qs(u.query).get("n", ["400"])[0])
                 return self._json({"lines": controller.runner.log_tail(n)})
+            if path == "/api/browse":
+                p = parse_qs(u.query).get("path", [""])[0]
+                return self._json(browse.listing(p))
             if path == "/api/tile":
                 return self._tile()
+            if path == "/sw.js":
+                # Served from the ROOT, not /static/. A service worker's scope
+                # is its own directory, so one at /static/sw.js cannot control
+                # the app at "/" — and Chrome will not offer "Install app"
+                # when the worker does not control start_url.
+                return self._static("sw.js", ctype="text/javascript")
             if path.startswith("/static/"):
                 return self._static(path[len("/static/"):])
             return self._send(404, "not found")
@@ -229,6 +267,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"removed": body["job_id"]})
             if path == "/api/quit":
                 return self._quit(force=bool(body.get("force")))
+            if path == "/api/new":
+                return self._new_job(body)
             return self._send(404, "not found")
         except (KeyError, ValueError, RuntimeError, FileNotFoundError) as e:
             return self._json({"error": str(e)}, 400)
@@ -238,6 +278,59 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
 
     # -- handlers --
+
+    def _new_job(self, body):
+        """
+        Create a job from the UI.
+
+        Only whitelisted settings are accepted, and they are handed to the same
+        create_job() the CLI uses, so the render script's own validation still
+        applies. Everything else — resolution, samples, output path — continues
+        to come from the .blend.
+        """
+        blend = (body.get("blend") or "").strip().strip('"')
+        if not blend.lower().endswith(".blend"):
+            raise ValueError("not a .blend file")
+        if not os.path.isfile(blend):
+            raise FileNotFoundError(f"file not found: {blend}")
+
+        kind = body.get("kind", "tiled")
+        cfg  = {}
+        if kind == "tiled":
+            cfg["LONG_EDGE"]   = int(body.get("long_edge") or 120000)
+            cfg["TILE_LONG"]   = int(body.get("tile_long") or 4096)
+            cfg["FILE_FORMAT"] = (body.get("format") or "WEBP").upper()
+            if body.get("render_name"):
+                cfg["RENDER_NAME"] = str(body["render_name"])
+            if body.get("preview"):
+                cfg.update({"PREVIEW_MODE": True, "PREVIEW_GRID": 5})
+            job_type = "tiled"
+        else:
+            job_type = "classic"
+            cfg["MODE"] = "still" if kind == "still" else "animation"
+            if kind == "still" and body.get("frame"):
+                cfg["FRAME"] = int(body["frame"])
+            if kind == "animation":
+                if body.get("frame_start"):
+                    cfg["FRAME_START"] = int(body["frame_start"])
+                if body.get("frame_end"):
+                    cfg["FRAME_END"] = int(body["frame_end"])
+
+        job = qm.create_job(blend, name=(body.get("name") or None),
+                            job_type=job_type, cfg=cfg)
+
+        out = paths.job_output_dir(job)
+        warn = None
+        if out and os.path.isdir(out):
+            n = len([f for f in os.listdir(out) if f.startswith("tile_")])
+            if n:
+                # Same folder as an earlier render: this RESUMES into it rather
+                # than starting fresh, which is a trap when a new render was
+                # intended. Surfaced, never silent.
+                warn = (f"{n} tiles already exist in {out} — this job will "
+                        f"resume into that folder. Use a different render name "
+                        f"for a separate render.")
+        return self._json({"job": job, "output_dir": out, "warning": warn})
 
     def _quit(self, force=False):
         """
@@ -289,17 +382,19 @@ class Handler(BaseHTTPRequestHandler):
         lt = paths.latest_tile(job)
         if not lt:
             return self._send(404, "no tile yet")
-        data = thumbnail(lt[0], lt[1])
+        data, skip = thumbnail(lt[0], lt[1])
         if not data:
-            return self._send(404, "tile unreadable")
+            # 415 rather than 404: the image exists, it is just too expensive
+            # to preview. The UI shows the reason instead of an empty frame.
+            return self._send(415, skip or "unreadable")
         return self._send(200, data, "image/jpeg")
 
-    def _static(self, rel):
+    def _static(self, rel, ctype=None):
         rel  = rel.replace("\\", "/").lstrip("/")
         full = os.path.normpath(os.path.join(STATIC_DIR, rel))
         if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
             return self._send(404, "not found")
-        ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
+        ctype = ctype or mimetypes.guess_type(full)[0] or "application/octet-stream"
         with open(full, "rb") as f:
             return self._send(200, f.read(), ctype)
 

@@ -100,7 +100,12 @@ body{
 #tileimg{width:100%; border-radius:6px; display:block; background:var(--panel-2);
          border:1px solid var(--line-soft)}
 .noimg{color:var(--faint); font-family:var(--mono); font-size:12px; padding:26px 0;
-       text-align:center}
+       text-align:center; line-height:1.6}
+.subtle{font-family:var(--mono); font-size:10.5px; color:var(--faint);
+        margin:-6px 0 9px; word-break:break-all}
+.toggle{display:inline-flex; align-items:center; gap:5px; cursor:pointer;
+        color:var(--faint); font-family:var(--mono); font-size:11px}
+.toggle input{accent-color:var(--glacier); cursor:pointer; margin:0}
 
 /* ── GPU ────────────────────────────────────────────────────────────────── */
 .meter{height:6px; background:var(--rock); border-radius:3px; overflow:hidden; margin:7px 0 3px}
@@ -179,6 +184,72 @@ button.mini{font-size:11px; padding:6px 10px; min-height:34px; letter-spacing:.0
 .logbox .hl{color:var(--glacier)}
 .logbox .err{color:var(--alert)}
 
+/* ── Modals: new render, file browser ───────────────────────────────────── */
+.modal{position:fixed; inset:0; background:rgba(4,7,10,.78); z-index:50;
+       display:flex; align-items:flex-start; justify-content:center;
+       padding:20px 14px; overflow:auto; backdrop-filter:blur(3px)}
+.modal[hidden]{display:none}
+.sheet{background:var(--panel); border:1px solid var(--line); border-radius:12px;
+       width:100%; max-width:540px; padding:18px; margin:auto}
+.sheet-head{display:flex; align-items:center; justify-content:space-between;
+            gap:12px; margin-bottom:16px}
+.sheet-head h2{font-family:var(--display); font-size:15px; letter-spacing:.14em;
+               text-transform:uppercase; margin:0; font-weight:600}
+.sheet-foot{display:flex; gap:9px; justify-content:flex-end; margin-top:18px;
+            flex-wrap:wrap}
+.sheet-note{font-size:11.5px; color:var(--faint); line-height:1.55; margin:14px 0 0}
+
+.field{display:block; margin-bottom:13px; flex:1 1 150px}
+.field > span{display:block; font-size:10.5px; letter-spacing:.13em;
+              text-transform:uppercase; color:var(--dim); margin-bottom:6px}
+.field > span em{font-style:normal; color:var(--faint); letter-spacing:0;
+                 text-transform:none}
+.field small{display:block; font-size:11px; color:var(--faint); margin-top:5px}
+.row{display:flex; gap:9px; align-items:flex-end; flex-wrap:wrap}
+.row .field{margin-bottom:0}
+
+input[type=text],input[type=number],select{
+  width:100%; background:var(--panel-2); border:1px solid var(--line);
+  color:var(--ink); border-radius:7px; padding:10px 11px; font-size:14px;
+  font-family:var(--mono); min-height:42px}
+input:focus,select:focus{border-color:var(--glacier-dim); outline:none}
+input::placeholder{color:#4B5A69}
+.check{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dim);
+       margin-top:4px; cursor:pointer}
+.check input{accent-color:var(--glacier); cursor:pointer}
+
+.segmented{display:flex; gap:0; border:1px solid var(--line); border-radius:8px;
+           overflow:hidden}
+.seg{flex:1; border:0; border-radius:0; background:var(--panel-2);
+     color:var(--dim); font-size:11px; padding:11px 6px; letter-spacing:.06em}
+.seg + .seg{border-left:1px solid var(--line)}
+.seg.on{background:var(--glacier); color:#08131A; font-weight:600}
+.seg:hover:not(.on){background:#182430; color:var(--ink)}
+
+.crumb{font-family:var(--mono); font-size:11.5px; color:var(--dim);
+       padding:9px 11px; background:var(--panel-2); border:1px solid var(--line);
+       border-radius:7px; margin-bottom:10px; word-break:break-all}
+.browselist{max-height:52vh; overflow:auto; border:1px solid var(--line-soft);
+            border-radius:8px; overscroll-behavior:contain}
+.brow{display:flex; align-items:center; gap:10px; padding:11px 12px; width:100%;
+      background:none; border:0; border-radius:0; text-align:left; cursor:pointer;
+      color:var(--ink); font-family:var(--body); font-size:13.5px;
+      text-transform:none; letter-spacing:0; min-height:auto}
+.brow + .brow{border-top:1px solid var(--line-soft)}
+.brow:hover{background:#16202B}
+.brow .ic{width:16px; flex:none; color:var(--faint); font-family:var(--mono)}
+.brow.blend .ic{color:var(--k-tiled)}
+.brow .sz{margin-left:auto; font-family:var(--mono); font-size:10.5px;
+          color:var(--faint); flex:none}
+.msg{padding:10px 12px; border-radius:7px; font-size:13px; margin-top:14px;
+     line-height:1.5}
+.msg.err{background:rgba(229,83,75,.1); border:1px solid rgba(229,83,75,.4);
+         color:#F2A19C}
+.msg.warn{background:rgba(255,177,59,.09); border:1px solid rgba(255,177,59,.35);
+          color:#F3D6A6}
+.msg.ok{background:rgba(104,192,138,.1); border:1px solid rgba(104,192,138,.4);
+        color:#A8DCBD}
+
 /* ── Quit ───────────────────────────────────────────────────────────────── */
 .quit{margin-left:auto}
 .quitwrap{margin-top:26px; padding-top:16px; border-top:1px solid var(--line-soft);
@@ -237,7 +308,12 @@ button.mini{font-size:11px; padding:6px 10px; min-height:34px; letter-spacing:.0
 
     <div>
       <div class="card">
-        <h2 class="card-title" id="tiletitle">Latest image <span class="aside" id="tileaside"></span></h2>
+        <h2 class="card-title" id="tiletitle">Latest image
+          <span class="aside">
+            <label class="toggle"><input type="checkbox" id="previewon" checked> preview</label>
+          </span>
+        </h2>
+        <div id="tileaside" class="subtle"></div>
         <div id="tilewrap"><div class="noimg">Nothing rendered yet</div></div>
       </div>
 
@@ -248,8 +324,101 @@ button.mini{font-size:11px; padding:6px 10px; min-height:34px; letter-spacing:.0
 
       <div class="card">
         <h2 class="card-title">Queue <span class="aside" id="queueaside"></span></h2>
+        <div class="actions" style="margin:0 0 12px">
+          <button class="primary" onclick="openNew()">+ New render</button>
+        </div>
         <div id="queue"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- New render -->
+  <div class="modal" id="newmodal" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>New render</h2>
+        <button class="mini" onclick="closeNew()">Close</button>
+      </div>
+
+      <label class="field">
+        <span>Blend file</span>
+        <div class="row">
+          <input type="text" id="nf-blend" placeholder="D:\scenes\valley.blend"
+                 spellcheck="false">
+          <button class="mini" onclick="openBrowse()">Browse…</button>
+        </div>
+        <small>Or drag a .blend onto the Rendafar desktop icon.</small>
+      </label>
+
+      <label class="field">
+        <span>Name <em>(optional)</em></span>
+        <input type="text" id="nf-name" placeholder="taken from the file name">
+      </label>
+
+      <div class="field">
+        <span>Type</span>
+        <div class="segmented" id="nf-kind">
+          <button class="seg on"  data-kind="tiled">Tiled 120k</button>
+          <button class="seg"     data-kind="animation">Animation</button>
+          <button class="seg"     data-kind="still">Still</button>
+        </div>
+      </div>
+
+      <div id="nf-tiled">
+        <div class="row">
+          <label class="field"><span>Long edge (px)</span>
+            <input type="number" id="nf-longedge" value="120000" step="1000"></label>
+          <label class="field"><span>Tile size</span>
+            <input type="number" id="nf-tile" value="4096" step="256"></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>Format</span>
+            <select id="nf-format">
+              <option>WEBP</option><option>JPEG</option><option>PNG</option>
+            </select></label>
+          <label class="field"><span>Render name <em>(optional)</em></span>
+            <input type="text" id="nf-rendername" placeholder="folder for the tiles"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="nf-preview">
+          Preview first (5×5 grid, low samples)</label>
+      </div>
+
+      <div id="nf-anim" hidden>
+        <div class="row">
+          <label class="field"><span>First frame</span>
+            <input type="number" id="nf-fstart" placeholder="from the .blend"></label>
+          <label class="field"><span>Last frame</span>
+            <input type="number" id="nf-fend" placeholder="from the .blend"></label>
+        </div>
+      </div>
+
+      <div id="nf-still" hidden>
+        <label class="field"><span>Frame</span>
+          <input type="number" id="nf-frame" placeholder="the scene's current frame"></label>
+      </div>
+
+      <p class="sheet-note">
+        Resolution, samples, output folder and format come from the .blend and are
+        never overridden.
+      </p>
+
+      <div id="nf-msg"></div>
+      <div class="sheet-foot">
+        <button onclick="closeNew()">Cancel</button>
+        <button class="primary" onclick="createJob()">Add to queue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File browser -->
+  <div class="modal" id="browsemodal" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Choose a .blend</h2>
+        <button class="mini" onclick="closeBrowse()">Close</button>
+      </div>
+      <div class="crumb" id="br-path">This PC</div>
+      <div class="browselist" id="br-list"></div>
     </div>
   </div>
 
@@ -458,15 +627,62 @@ async function tick(){
   actions(s);
   paintLog(s.log);
 
-  if (s.last_tile){
-    $("tileaside").textContent = `${s.last_tile.name} · ${s.last_tile.age_s}s ago`;
-    if (s.last_tile.mtime !== tileStamp){
-      tileStamp = s.last_tile.mtime;
-      $("tilewrap").innerHTML =
-        `<img id="tileimg" alt="Most recent tile rendered" src="/api/tile?t=${tileStamp}">`;
+  paintPreview(s);
+}
+
+/* The preview decodes the image on the render machine, so it is optional and
+   the choice is remembered. Turning it off costs nothing else — progress, the
+   tile map and the log all keep working. */
+function previewEnabled(){ return localStorage.getItem("preview") !== "off"; }
+
+function paintPreview(s){
+  const on = previewEnabled();
+  $("previewon").checked = on;
+
+  if (!s.last_tile){
+    $("tileaside").textContent = "";
+    if (!$("tilewrap").dataset.empty){
+      $("tilewrap").innerHTML = `<div class="noimg">Nothing rendered yet</div>`;
+      $("tilewrap").dataset.empty = "1";
     }
+    return;
+  }
+  delete $("tilewrap").dataset.empty;
+  $("tileaside").textContent = `${s.last_tile.name} · ${s.last_tile.age_s}s ago`;
+
+  if (!on){
+    tileStamp = 0;
+    $("tilewrap").innerHTML =
+      `<div class="noimg">Preview off<br>the newest file is still listed above</div>`;
+    return;
+  }
+  if (s.last_tile.mtime !== tileStamp){
+    tileStamp = s.last_tile.mtime;
+    const img = new Image();
+    img.id = "tileimg";
+    img.alt = "Most recent image rendered";
+    img.onload  = () => { $("tilewrap").replaceChildren(img); };
+    // 415 = too big to preview cheaply. Say so rather than showing a broken
+    // frame, and never retry the same file.
+    img.onerror = async () => {
+      let why = "Preview unavailable";
+      try {
+        const r = await fetch(`/api/tile?t=${tileStamp}`);
+        if (r.status === 415) why = await r.text();
+      } catch(e){}
+      $("tilewrap").innerHTML = `<div class="noimg">${why}</div>`;
+    };
+    img.src = `/api/tile?t=${tileStamp}`;
   }
 }
+
+document.addEventListener("change", (e) => {
+  if (e.target.id === "previewon"){
+    localStorage.setItem("preview", e.target.checked ? "on" : "off");
+    tileStamp = 0;
+    tick();
+  }
+});
 
 async function act(what, jobId, offset){
   const body = {};
@@ -485,6 +701,112 @@ function removeJob(id){
   if (confirm("Remove this job from the queue?\n\nRendered tiles stay on disk."))
     act("remove", id);
 }
+
+/* ── New render ─────────────────────────────────────────────────────────── */
+
+function openNew(blendPath){
+  if (blendPath) $("nf-blend").value = blendPath;
+  $("nf-msg").innerHTML = "";
+  $("newmodal").hidden = false;
+  (blendPath ? $("nf-name") : $("nf-blend")).focus();
+}
+function closeNew(){ $("newmodal").hidden = true; }
+
+let NEW_KIND = "tiled";
+document.addEventListener("click", (e) => {
+  const seg = e.target.closest(".seg");
+  if (!seg) return;
+  NEW_KIND = seg.dataset.kind;
+  document.querySelectorAll(".seg").forEach(b => b.classList.toggle("on", b === seg));
+  $("nf-tiled").hidden = NEW_KIND !== "tiled";
+  $("nf-anim").hidden  = NEW_KIND !== "animation";
+  $("nf-still").hidden = NEW_KIND !== "still";
+});
+
+function msg(cls, text){
+  $("nf-msg").innerHTML = `<div class="msg ${cls}">${text}</div>`;
+}
+
+async function createJob(){
+  const body = {
+    blend: $("nf-blend").value.trim(),
+    name:  $("nf-name").value.trim(),
+    kind:  NEW_KIND,
+  };
+  if (NEW_KIND === "tiled"){
+    body.long_edge   = $("nf-longedge").value;
+    body.tile_long   = $("nf-tile").value;
+    body.format      = $("nf-format").value;
+    body.render_name = $("nf-rendername").value.trim();
+    body.preview     = $("nf-preview").checked;
+  } else if (NEW_KIND === "animation"){
+    body.frame_start = $("nf-fstart").value;
+    body.frame_end   = $("nf-fend").value;
+  } else {
+    body.frame = $("nf-frame").value;
+  }
+
+  const r = await fetch("/api/new", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const d = await r.json().catch(()=>({error:"could not read the reply"}));
+  if (d.error) return msg("err", d.error);
+
+  // A warning is not a failure: the job exists. Keep the panel open so the
+  // shared-output-folder trap is actually read rather than flashed past.
+  if (d.warning){
+    msg("warn", `Added ${d.job.id}, but: ${d.warning}`);
+  } else {
+    msg("ok", `Added ${d.job.id} — ${d.job.name}`);
+    setTimeout(closeNew, 1200);
+  }
+  tick();
+}
+
+/* ── File browser ───────────────────────────────────────────────────────── */
+/* A browser cannot reveal a dropped file's real path, so the picking happens
+   server-side. It also means this works from the phone. */
+
+async function openBrowse(path){
+  $("browsemodal").hidden = false;
+  const r = await fetch(`/api/browse?path=${encodeURIComponent(path || "")}`);
+  const d = await r.json();
+  $("br-path").textContent = d.path || "This PC";
+
+  const rows = [];
+  if (d.parent !== null && d.parent !== undefined)
+    rows.push(`<button class="brow" onclick="openBrowse('${esc(d.parent)}')">
+                 <span class="ic">..</span><span>up one level</span></button>`);
+  if (d.error)
+    rows.push(`<div class="msg err" style="margin:10px">${d.error}</div>`);
+
+  for (const e of (d.entries || [])){
+    rows.push(e.dir
+      ? `<button class="brow" onclick="openBrowse('${esc(e.path)}')">
+           <span class="ic">/</span><span>${e.name}</span></button>`
+      : `<button class="brow blend" onclick="pickBlend('${esc(e.path)}')">
+           <span class="ic">B</span><span>${e.name}</span>
+           <span class="sz">${e.mb} MB</span></button>`);
+  }
+  if (!rows.length) rows.push(`<div class="noimg">nothing here</div>`);
+  $("br-list").innerHTML = rows.join("");
+}
+function closeBrowse(){ $("browsemodal").hidden = true; }
+function esc(s){ return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'"); }
+
+function pickBlend(path){
+  $("nf-blend").value = path.replace(/\\\\/g, "\\");
+  closeBrowse();
+  if ($("newmodal").hidden) openNew();
+}
+
+/* A .blend dragged onto the desktop icon arrives here as ?new=<path>. Windows
+   gives the launcher the full path, which the browser never could. */
+(function(){
+  const p = new URLSearchParams(location.search).get("new");
+  if (p) { history.replaceState({}, "", "/"); setTimeout(() => openNew(p), 300); }
+})();
 
 /* Quitting is refused while a render runs: without a supervisor, Blender would
    keep going with nothing to finalise the job or start the next one. Stopping
@@ -519,10 +841,13 @@ function showStopped(){
        </div></div>`;
 }
 
-/* Registered only so Chrome offers "Install app" on Android. It caches nothing
-   — see sw.js. */
-if ("serviceWorker" in navigator && location.protocol === "https:")
-  navigator.serviceWorker.register("/static/sw.js").catch(()=>{});
+/* Registered from "/" so the worker's scope covers the whole app. A worker at
+   /static/sw.js would only control /static/, and Chrome refuses to offer
+   "Install app" when the worker does not control start_url — which is exactly
+   why the install option never appeared on Android. Caches nothing, see sw.js. */
+if ("serviceWorker" in navigator &&
+    (location.protocol === "https:" || location.hostname === "127.0.0.1"))
+  navigator.serviceWorker.register("/sw.js", {scope: "/"}).catch(()=>{});
 
 tick();
 const POLL = setInterval(tick, 3000);

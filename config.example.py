@@ -49,6 +49,13 @@ BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
 LOG_BUFFER_LINES = 1500     # lines of stdout kept in memory for the live view
 AUTO_START_NEXT  = True     # queue advances on its own when a job finishes
 
+# Preview limits. Building the thumbnail decodes the image on the machine that
+# is rendering, so past these the preview is skipped rather than stealing CPU
+# and memory from the render.
+PREVIEW_MAX_MP = 80         # megapixels
+PREVIEW_MAX_MB = 200        # file size on disk
+PREVIEW_MAX_PX = 1000       # long edge of the generated thumbnail
+
 PORT = 8765
 
 # Bind address — localhost only.

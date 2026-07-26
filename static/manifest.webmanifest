@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "Rendafar",
   "short_name": "Rendafar",
   "description": "Watch and steer long Blender renders from anywhere.",
