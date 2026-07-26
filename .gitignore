@@ -39,3 +39,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Absolute python path for the scheduled task (machine-specific)
+local_python.bat

@@ -12,8 +12,14 @@ rem ============================================================================
 title Rendafar
 cd /d "%~dp0"
 
+rem Resolve Python. A scheduled task starts in a fresh logon session that may
+rem not inherit the user PATH, so a bare "python" can fail with exit 9009.
+rem local_python.bat (gitignored) pins an absolute path - see the .example.
+set "PYTHON=python"
+if exist "%~dp0local_python.bat" call "%~dp0local_python.bat"
+
 :loop
-python -u server.py
+"%PYTHON%" -u server.py
 echo.
 echo   Rendafar stopped (exit %errorlevel%). Restarting in 10 s - Ctrl+C to abort.
 "%SystemRoot%\System32\timeout.exe" /t 10 >nul
