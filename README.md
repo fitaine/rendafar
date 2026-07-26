@@ -58,7 +58,13 @@ pip install Pillow                 # optional, for the preview thumbnail
 python server.py
 ```
 
-Open `http://127.0.0.1:8765`.
+Open `http://127.0.0.1:8765`. On Windows, `START RENDAFAR.bat` does both.
+
+Rendafar is a normal app — run it when you want it, close the window to stop.
+Optionally run `INSTALL AUTO-RESUME.bat` once: it installs a logon check that does
+nothing at all, *except* when a render was interrupted by a power cut, in which case it
+starts Rendafar so the render resumes and notifies you. It never starts the app just
+because you logged in.
 
 Queue a render:
 
