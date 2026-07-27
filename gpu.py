@@ -33,6 +33,11 @@ _cache      = {"at": 0.0, "data": None}
 _cache_lock = threading.Lock()
 CACHE_S     = 2.0
 
+# Launched from the desktop icon the server has no console, so every subprocess
+# would pop a new console window for a fraction of a second. Polling nvidia-smi
+# every couple of seconds made the screen flash constantly.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def _exe():
     for p in _CANDIDATES:
@@ -49,6 +54,7 @@ def _query():
         out = subprocess.run(
             [exe, f"--query-gpu={_FIELDS}", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10,
+            creationflags=NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as e:
         return {"available": False, "error": str(e)}

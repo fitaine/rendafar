@@ -308,7 +308,18 @@ class Handler(BaseHTTPRequestHandler):
                 qm.remove(body["job_id"])
                 return self._json({"removed": body["job_id"]})
             if path == "/api/quit":
+                # Local only: shutting the server down from the phone is a
+                # one-way door, since nothing can start it again remotely.
+                if not self._is_local():
+                    return self._json(
+                        {"error": "Rendafar can only be closed on the render PC."},
+                        403)
                 return self._quit(force=bool(body.get("force")))
+            if path == "/api/pick":
+                if not self._is_local():
+                    return self._json(
+                        {"error": "The file dialog opens on the render PC."}, 403)
+                return self._pick_file(body)
             if path == "/api/new":
                 # Local only, deliberately. Remote is for watching and steering
                 # renders that already exist — never for creating them.
@@ -333,6 +344,44 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
 
     # -- handlers --
+
+    def _pick_file(self, body):
+        """
+        Open a real Windows file dialog on the render PC.
+
+        Local only, and not merely for safety: the dialog appears on the
+        machine's screen, so triggering it from the phone would pop a window
+        nobody is standing in front of.
+
+        Run as a separate process — Tk is not thread-safe and the server
+        answers on worker threads.
+        """
+        py = sys.executable
+        # Use the console-less interpreter when there is one, so no black
+        # window flashes up behind the dialog.
+        pyw = os.path.join(os.path.dirname(py), "pythonw.exe")
+        if os.path.isfile(pyw):
+            py = pyw
+
+        args = [py, os.path.join(config.APP_DIR, "pick_file.py")]
+        start = (body.get("start") or "").strip()
+        if start:
+            args.append(start)
+        try:
+            # Generous timeout: this waits on a human browsing their disk.
+            out = subprocess.run(
+                args, capture_output=True, text=True, timeout=600,
+                cwd=config.APP_DIR,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            return self._json({"path": "", "error": "the dialog timed out"})
+        except OSError as e:
+            return self._json({"path": "", "error": str(e)})
+
+        path = (out.stdout or "").strip()
+        if not path:
+            return self._json({"path": ""})          # cancelled — not an error
+        return self._json({"path": path})
 
     def _new_job(self, body):
         """

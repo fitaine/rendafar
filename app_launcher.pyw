@@ -102,40 +102,41 @@ def wait_for_server(seconds=25):
     return False
 
 
+APP_NAME = "Rendafar"
+
+BROWSER_ROOTS = [
+    ("Google", "Chrome", "User Data"),
+    ("Microsoft", "Edge", "User Data"),
+    ("BraveSoftware", "Brave-Browser", "User Data"),
+]
+
+
 def installed_app_id():
     """
-    The Chrome/Edge app id if Rendafar has been installed as a web app.
+    The browser's app id if Rendafar has been installed as a web app.
 
     Worth the trouble: a window opened with --app=<url> belongs to chrome.exe,
-    so Windows shows CHROME's icon in the taskbar and groups it with Chrome.
-    A window opened with --app-id=<installed id> belongs to the installed app,
+    so Windows shows CHROME's icon in the taskbar and groups it with Chrome. A
+    window opened with --app-id=<installed id> belongs to the installed app,
     which has its own icon and its own taskbar identity.
 
-    Read from the browser's own Preferences file rather than guessed, and
-    matched on start_url so it cannot pick up somebody else's app.
+    Found via the browser's "Web Applications" folder, which holds one
+    `_crx_<app id>` directory per installed app containing `<App Name>.ico`.
+    Chrome no longer records installed web apps in its Preferences file — that
+    is where an earlier version of this looked, and why it always returned
+    None.
     """
-    roots = [
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data"),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data"),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "BraveSoftware",
-                     "Brave-Browser", "User Data"),
-    ]
-    for root in roots:
+    local = os.environ.get("LOCALAPPDATA", "")
+    if not local:
+        return None
+    for parts in BROWSER_ROOTS:
+        root = os.path.join(local, *parts)
         if not os.path.isdir(root):
             continue
-        for prefs in glob.glob(os.path.join(root, "*", "Preferences")):
-            try:
-                with open(prefs, encoding="utf-8", errors="replace") as f:
-                    data = json.load(f)
-            except (OSError, ValueError):
-                continue
-            apps = (data.get("web_apps") or {}).get("web_app_ids") or {}
-            for app_id, info in apps.items():
-                url = ""
-                if isinstance(info, dict):
-                    url = info.get("start_url") or ""
-                if url and str(config.PORT) in url and "127.0.0.1" in url:
-                    return app_id
+        for folder in glob.glob(os.path.join(root, "*", "Web Applications",
+                                             "_crx_*")):
+            if os.path.isfile(os.path.join(folder, f"{APP_NAME}.ico")):
+                return os.path.basename(folder)[len("_crx_"):]
     return None
 
 
@@ -154,12 +155,17 @@ def open_window(new_blend=None):
     browser = find_browser()
     if browser:
         app_id = installed_app_id()
+        # NO_WINDOW is a no-op for a GUI program like a browser, but every
+        # launch in this project carries it so "does this flash a console?"
+        # stays a question with one answer.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         if app_id and not new_blend:
             # Installed app: correct icon, own taskbar identity.
-            subprocess.Popen([browser, f"--app-id={app_id}"], close_fds=True)
+            subprocess.Popen([browser, f"--app-id={app_id}"],
+                             close_fds=True, creationflags=flags)
         else:
             subprocess.Popen([browser, f"--app={url}", "--window-size=1280,900"],
-                             close_fds=True)
+                             close_fds=True, creationflags=flags)
         return True
     import webbrowser
     webbrowser.open(url)

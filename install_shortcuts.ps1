@@ -28,9 +28,10 @@ $target  = Join-Path $app "app_launcher.pyw"
 $icon    = Join-Path $app "static\rendafar.ico"
 if (-not (Test-Path $icon)) { throw "Icon missing. Run: python make_icon.py" }
 
+$ws = New-Object -ComObject WScript.Shell
+
 function New-RendafarShortcut($path) {
-    $ws = New-Object -ComObject WScript.Shell
-    $s  = $ws.CreateShortcut($path)
+    $s = $ws.CreateShortcut($path)
     $s.TargetPath       = $pythonw
     $s.Arguments        = "`"$target`""
     $s.WorkingDirectory = $app
@@ -46,6 +47,34 @@ $start   = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 
 New-RendafarShortcut (Join-Path $desktop "Rendafar.lnk")
 New-RendafarShortcut (Join-Path $start   "Rendafar.lnk")
+
+# Installing the PWA makes the browser create its own "Rendafar" shortcuts that
+# open the window directly. Those cannot start the server, so clicking one when
+# Rendafar is closed gives "Ce site est inaccessible". Point them at the
+# launcher instead, so every Rendafar icon works the same way.
+$browserShortcuts = @(
+    (Join-Path $desktop "Rendafar*.lnk"),
+    (Join-Path $start   "Chrome Apps\Rendafar*.lnk"),
+    (Join-Path $start   "Rendafar*.lnk")
+) | ForEach-Object { Get-ChildItem $_ -ErrorAction SilentlyContinue }
+
+foreach ($f in $browserShortcuts) {
+    $s = $ws.CreateShortcut($f.FullName)
+    if ($s.Arguments -match '--app-id=') {
+        if ($f.BaseName -match '\(\d+\)$') {
+            # A duplicate the browser added beside ours - just remove it.
+            Remove-Item $f.FullName -Force
+            Write-Host "  removed duplicate  $($f.Name)"
+        } else {
+            $s.TargetPath       = $pythonw
+            $s.Arguments        = "`"$target`""
+            $s.WorkingDirectory = $app
+            $s.IconLocation     = "$icon,0"
+            $s.Save()
+            Write-Host "  repointed          $($f.FullName)"
+        }
+    }
+}
 
 Write-Host ""
 Write-Host "  Python : $pythonw"

@@ -81,6 +81,10 @@ _SYS32    = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32"
 _TASKLIST = os.path.join(_SYS32, "tasklist.exe")
 _TASKKILL = os.path.join(_SYS32, "taskkill.exe")
 
+# The server has no console when launched as an app, so without this every
+# helper process — and Blender itself — flashes up a console window.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def pid_alive(pid, image="blender.exe"):
     """
@@ -96,6 +100,7 @@ def pid_alive(pid, image="blender.exe"):
         out = subprocess.run(
             [_TASKLIST, "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, timeout=15,
+            creationflags=NO_WINDOW,
         ).stdout
     except (OSError, subprocess.SubprocessError, ValueError):
         return False
@@ -111,7 +116,8 @@ def kill_tree(pid):
     """
     try:
         subprocess.run([_TASKKILL, "/F", "/T", "/PID", str(pid)],
-                       capture_output=True, timeout=30)
+                       capture_output=True, timeout=30,
+                       creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -214,7 +220,10 @@ class Runner:
                 text=True, encoding="utf-8", errors="replace",
                 bufsize=1,
                 cwd=config.APP_DIR,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                # NO_WINDOW as well as the process group: Blender is a console
+                # program, and its output is already captured here, so a
+                # console window would only flash up and steal focus.
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW,
             )
             self._job_id   = job_id
             self._stopping = False

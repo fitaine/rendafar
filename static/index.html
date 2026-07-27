@@ -351,7 +351,7 @@ input::placeholder{color:#4B5A69}
         <div class="row">
           <input type="text" id="nf-blend" placeholder="D:\scenes\valley.blend"
                  spellcheck="false">
-          <button class="mini" id="nf-browse" onclick="openBrowse()">Browse…</button>
+          <button class="mini" id="nf-browse" onclick="pickFile()">Browse…</button>
         </div>
         <small id="nf-blendhint">Or drag a .blend onto the Rendafar desktop icon.</small>
       </label>
@@ -783,10 +783,34 @@ async function createJob(){
   tick();
 }
 
-/* ── File browser ───────────────────────────────────────────────────────── */
-/* A browser cannot reveal a dropped file's real path, so the picking happens
-   server-side. It also means this works from the phone. */
+/* ── Picking a .blend ───────────────────────────────────────────────────── */
 
+/* Opens a REAL Windows Explorer dialog on the render PC. The dialog is shown
+   by the server, because a web page can neither open one nor learn a file's
+   path. Falls back to the built-in list browser if that fails for any reason. */
+async function pickFile(){
+  const btn = $("nf-browse");
+  const was = btn.textContent;
+  btn.textContent = "Choosing…";
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/pick", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({start: $("nf-blend").value.trim()})
+    });
+    const d = await r.json();
+    if (d.path) $("nf-blend").value = d.path;      // empty = cancelled
+    else if (d.error) openBrowse();
+  } catch(e){
+    openBrowse();
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+  }
+}
+
+/* Fallback list browser, also used from the phone in earlier versions. Kept
+   because it needs nothing but HTTP. */
 async function openBrowse(path){
   $("browsemodal").hidden = false;
   const r = await fetch(`/api/browse?path=${encodeURIComponent(path || "")}`);
