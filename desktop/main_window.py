@@ -16,7 +16,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import config
 
-from . import api, theme
+from . import api, panels, theme
 from .poller import Poller
 
 KIND_LABEL = {"tiled": "Tiled 120k", "animation": "Animation", "still": "Still"}
@@ -107,6 +107,78 @@ class StatusDot(QtWidgets.QWidget):
         p.setBrush(c)
         p.setPen(QtCore.Qt.NoPen)
         p.drawEllipse(1, 1, 9, 9)
+
+
+class CollapsibleDock(QtWidgets.QDockWidget):
+    """
+    A panel that can be rolled up to just its title bar.
+
+    Collapsing is not the same as closing: a closed panel is gone until you
+    fetch it back from the View menu, while a collapsed one stays exactly where
+    it is, keeping its place in the layout, and is one click from returning.
+    That is what you want when a panel is momentarily in the way.
+
+    Double-click the title, or use the chevron.
+    """
+
+    def __init__(self, title, parent=None):
+        super().__init__(title, parent)
+        self._collapsed = False
+        self._sizes = None
+
+        bar = QtWidgets.QWidget()
+        lay = QtWidgets.QHBoxLayout(bar)
+        lay.setContentsMargins(10, 4, 6, 4)
+        lay.setSpacing(6)
+
+        self._chevron = QtWidgets.QToolButton()
+        self._chevron.setArrowType(QtCore.Qt.DownArrow)
+        self._chevron.setAutoRaise(True)
+        self._chevron.setFixedSize(18, 18)
+        self._chevron.setToolTip("Collapse this panel")
+        self._chevron.clicked.connect(self.toggle_collapsed)
+
+        self._label = QtWidgets.QLabel(title)
+        self._label.setFont(theme.label_font())
+        self._label.setStyleSheet(f"color:{theme.DIM}")
+
+        close = QtWidgets.QToolButton()
+        close.setText("✕")
+        close.setAutoRaise(True)
+        close.setFixedSize(18, 18)
+        close.setToolTip("Close this panel — View brings it back")
+        close.clicked.connect(self.close)
+
+        lay.addWidget(self._chevron)
+        lay.addWidget(self._label)
+        lay.addStretch(1)
+        lay.addWidget(close)
+        bar.setObjectName("dockTitle")
+        bar.mouseDoubleClickEvent = lambda e: self.toggle_collapsed()
+        self.setTitleBarWidget(bar)
+
+    def toggle_collapsed(self):
+        w = self.widget()
+        if w is None:
+            return
+        self._collapsed = not self._collapsed
+        w.setVisible(not self._collapsed)
+        self._chevron.setArrowType(
+            QtCore.Qt.RightArrow if self._collapsed else QtCore.Qt.DownArrow)
+        self._chevron.setToolTip(
+            "Expand this panel" if self._collapsed else "Collapse this panel")
+        if self._collapsed:
+            # Pin the height to the title bar, or the dock keeps its old size
+            # and leaves a hole where the content used to be.
+            self._sizes = (self.minimumHeight(), self.maximumHeight())
+            self.setFixedHeight(self.titleBarWidget().sizeHint().height() + 2)
+        else:
+            lo, hi = self._sizes or (0, 16777215)
+            self.setMinimumHeight(lo)
+            self.setMaximumHeight(hi)
+
+    def is_collapsed(self):
+        return self._collapsed
 
 
 class KindStripe(QtWidgets.QStyledItemDelegate):
@@ -213,13 +285,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setAcceptDrops(True)
 
         self._last = {}
+        self._tile_stamp = None
+        self._blend_shown = None
+        self._blend_jobs = []
         self._build_menus()
         self._build()
+        self._default_state = self.saveState()
+        self._restore_layout()
 
         self.poller = Poller(2000, self)
         self.poller.status_ready.connect(self.on_status)
         self.poller.server_down.connect(self.on_server_down)
         self.poller.start()
+
+    # ── layout memory ────────────────────────────────────────────────────
+
+    def _settings(self):
+        return QtCore.QSettings("Buccino", "Rendafar")
+
+    def _restore_layout(self):
+        s = self._settings()
+        geo, state = s.value("geometry"), s.value("windowState")
+        if geo:
+            self.restoreGeometry(geo)
+        self._had_saved_layout = bool(state)
+        if state:
+            self.restoreState(state)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # Once, and only when there is no arrangement of her own to respect.
+        if not getattr(self, "_sized", False):
+            self._sized = True
+            if not self._had_saved_layout:
+                QtCore.QTimer.singleShot(0, self._size_docks)
+
+    def _save_layout(self):
+        s = self._settings()
+        s.setValue("geometry", self.saveGeometry())
+        s.setValue("windowState", self.saveState())
+
+    def _size_docks(self):
+        self.resizeDocks([self.docks["Queue"], self.docks["Render"]],
+                         [430, 620], QtCore.Qt.Horizontal)
+
+    def reset_layout(self):
+        """Put every panel back, including any that were closed."""
+        self.restoreState(self._default_state)
+        for title, dock in self.docks.items():
+            dock.setVisible(title != "Log")
+        QtCore.QTimer.singleShot(0, self._size_docks)
 
     # ── menus ────────────────────────────────────────────────────────────
 
@@ -256,7 +371,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ── Render ──
         m = bar.addMenu("&Render")
-        self.act_start = m.addAction("&Start next job")
+        self.act_start = m.addAction("&Start queue")
         self.act_start.setShortcut("Ctrl+R")
         self.act_start.triggered.connect(self.do_start)
 
@@ -279,6 +394,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ── View ──
         m = bar.addMenu("&View")
+        self.menu_view = m
         a = m.addAction("&Refresh now")
         a.setShortcut(QtGui.QKeySequence.Refresh)
         a.triggered.connect(lambda: self.poller.refresh_now())
@@ -286,6 +402,12 @@ class MainWindow(QtWidgets.QMainWindow):
         a = m.addAction("Open the &web interface")
         a.setStatusTip("The same thing in a browser — what the phone sees")
         a.triggered.connect(lambda: self._open(api.BASE))
+        m.addSeparator()
+        a = m.addAction("Reset &layout")
+        a.setStatusTip("Put every panel back where it started")
+        a.triggered.connect(self.reset_layout)
+        m.addSeparator()
+        # Panel toggles are appended here by _build_docks().
 
         # ── Tools ──
         m = bar.addMenu("&Tools")
@@ -367,24 +489,30 @@ class MainWindow(QtWidgets.QMainWindow):
     # ── layout ───────────────────────────────────────────────────────────
 
     def _build(self):
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-        root = QtWidgets.QVBoxLayout(central)
-        root.setContentsMargins(14, 12, 14, 12)
-        root.setSpacing(12)
+        # The header goes in a toolbar, and the central widget is collapsed to
+        # nothing. Qt always hands the central widget whatever space the docks
+        # do not take, so anything left there becomes an unmovable block in the
+        # middle of the window — with it gone, the panels own the whole body
+        # and can be arranged freely.
+        header = QtWidgets.QWidget()
+        hl = QtWidgets.QVBoxLayout(header)
+        hl.setContentsMargins(14, 8, 14, 10)
+        hl.setSpacing(8)
+        hl.addLayout(self._build_header())
+        hl.addLayout(self._build_status())
 
-        root.addLayout(self._build_header())
-        root.addLayout(self._build_status())
+        bar = QtWidgets.QToolBar("Header")
+        bar.setObjectName("headerbar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.addWidget(header)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, bar)
 
-        # Queue on the left, the selected render's detail on the right: the
-        # queue is what gets acted on, so it sits where the eye starts.
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        split.setChildrenCollapsible(False)
-        split.addWidget(self._build_queue_card())
-        split.addWidget(self._build_detail_card())
-        split.setStretchFactor(0, 2)
-        split.setStretchFactor(1, 3)
-        root.addWidget(split, 1)
+        hollow = QtWidgets.QWidget()
+        hollow.setFixedSize(0, 0)
+        self.setCentralWidget(hollow)
+
+        self._build_docks()
 
         self.setStatusBar(QtWidgets.QStatusBar())
         self.statusBar().showMessage("Starting…")
@@ -423,7 +551,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         btns = QtWidgets.QVBoxLayout()
         btns.setSpacing(7)
-        self.btn_start = QtWidgets.QPushButton("Start next job")
+        # "Start queue", not "Start next job": it runs the queue from here on,
+        # advancing by itself as each render finishes.
+        self.btn_start = QtWidgets.QPushButton("Start queue")
         self.btn_start.setObjectName("primary")
         self.btn_start.clicked.connect(self.do_start)
         self.btn_stop = QtWidgets.QPushButton("Stop render")
@@ -434,42 +564,79 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addLayout(btns, 0)
         return row
 
-    def _build_detail_card(self):
-        card = Card("Render")
-        self.detail_title = card
-        self.placeholder = QtWidgets.QLabel(
-            "Progress, the tile map, the live mosaic and the GPU panel arrive "
-            "in the next stage.")
-        self.placeholder.setWordWrap(True)
-        self.placeholder.setAlignment(QtCore.Qt.AlignCenter)
-        self.placeholder.setStyleSheet(f"color:{theme.FAINT}")
-        card.body.addWidget(self.placeholder, 1)
-        return card
+    # ── docks ────────────────────────────────────────────────────────────
 
-    def _build_queue_card(self):
-        card = Card("Queue")
+    def _dock(self, title, widget, area, visible=True):
+        d = CollapsibleDock(title.upper(), self)
+        d.setObjectName("dock_" + title.lower().replace(" ", "_"))
+        d.setWidget(widget)
+        d.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+        # Movable and closable, but NOT floatable: panels rearrange inside the
+        # window and never tear off into loose windows of their own.
+        d.setFeatures(QtWidgets.QDockWidget.DockWidgetMovable |
+                      QtWidgets.QDockWidget.DockWidgetClosable)
+        self.addDockWidget(area, d)
+        d.setVisible(visible)
+        self.docks[title] = d
+        return d
 
+    def _build_docks(self):
+        self.docks = {}
+        self.setDockOptions(QtWidgets.QMainWindow.AnimatedDocks |
+                            QtWidgets.QMainWindow.AllowNestedDocks |
+                            QtWidgets.QMainWindow.AllowTabbedDocks)
+
+        self._dock("Queue",   self._queue_panel(),   QtCore.Qt.LeftDockWidgetArea)
+        self._dock("Blend",   self._blend_panel(),   QtCore.Qt.LeftDockWidgetArea)
+        self._dock("Render",  self._render_panel(),  QtCore.Qt.RightDockWidgetArea)
+        self._dock("Preview", self._preview_panel(), QtCore.Qt.RightDockWidgetArea)
+        self._dock("GPU",     self._gpu_panel(),     QtCore.Qt.RightDockWidgetArea)
+        # The log is what you reach for when something looks wrong, not
+        # something to keep on screen while everything is fine.
+        self._dock("Log", self._log_panel(), QtCore.Qt.BottomDockWidgetArea,
+                   visible=False)
+
+        # Preview and GPU share a spot as tabs by default, so the tile map gets
+        # real height instead of a sliver. Either can be dragged out again.
+        self.tabifyDockWidget(self.docks["Preview"], self.docks["GPU"])
+        self.docks["Preview"].raise_()
+        # Tabs on top, like every other panelled application.
+        for area in (QtCore.Qt.LeftDockWidgetArea, QtCore.Qt.RightDockWidgetArea,
+                     QtCore.Qt.TopDockWidgetArea, QtCore.Qt.BottomDockWidgetArea):
+            self.setTabPosition(area, QtWidgets.QTabWidget.North)
+
+        # Sizing happens in showEvent: resizeDocks is silently ignored before
+        # the window has actually been laid out.
+
+        # Menu entries follow the panels, including when one is closed by its X.
+        for title, dock in self.docks.items():
+            act = dock.toggleViewAction()
+            act.setText(title)
+            self.menu_view.addAction(act)
+
+    def _queue_panel(self):
+        p = panels.Panel()
         top = QtWidgets.QHBoxLayout()
         self.btn_new = QtWidgets.QPushButton("+  New render")
         self.btn_new.setObjectName("primary")
         self.btn_new.clicked.connect(self.do_new)
         top.addWidget(self.btn_new)
         top.addStretch(1)
-        card.body.addLayout(top)
+        p.lay.addLayout(top)
 
         self.queue = QueueTable()
         self.queue.itemSelectionChanged.connect(self._sync_buttons)
-        card.body.addWidget(self.queue, 1)
+        p.lay.addWidget(self.queue, 1)
 
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(7)
         self.btn_resume = QtWidgets.QPushButton("Resume")
         self.btn_resume.clicked.connect(self.do_resume)
         self.btn_up = QtWidgets.QPushButton("↑")
-        self.btn_up.setFixedWidth(38)
+        self.btn_up.setFixedWidth(36)
         self.btn_up.clicked.connect(lambda: self.do_move(-1))
         self.btn_down = QtWidgets.QPushButton("↓")
-        self.btn_down.setFixedWidth(38)
+        self.btn_down.setFixedWidth(36)
         self.btn_down.clicked.connect(lambda: self.do_move(1))
         self.btn_remove = QtWidgets.QPushButton("Remove")
         self.btn_remove.clicked.connect(self.do_remove)
@@ -477,8 +644,72 @@ class MainWindow(QtWidgets.QMainWindow):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(self.btn_remove)
-        card.body.addLayout(row)
-        return card
+        p.lay.addLayout(row)
+        return p
+
+    def _render_panel(self):
+        p = panels.Panel()
+        self.tilemap = panels.TileMap()
+        p.lay.addWidget(self.tilemap, 1)
+        self.render_meta = QtWidgets.QLabel("")
+        self.render_meta.setObjectName("meta")
+        self.render_meta.setWordWrap(True)
+        p.lay.addWidget(self.render_meta)
+        return p
+
+    def _preview_panel(self):
+        self.preview = panels.PreviewPanel()
+        return self.preview
+
+    def _gpu_panel(self):
+        self.gpu_panel = panels.GpuPanel()
+        return self.gpu_panel
+
+    def _blend_panel(self):
+        self.blend_panel = panels.BlendPanel()
+        self.blend_panel.refresh_btn.clicked.connect(
+            lambda: self._load_blend_info(self._blend_shown, refresh=True))
+        return self.blend_panel
+
+    # ── .blend settings ──────────────────────────────────────────────────
+
+    def _load_blend_info(self, blend, refresh=False):
+        """
+        Fetch a .blend's settings without freezing the window.
+
+        Blender has to open the file, which is seconds the first time, so it
+        happens on a worker and the answer is dropped if the selection moved on
+        in the meantime.
+        """
+        if not blend:
+            self.blend_panel.clear()
+            return
+        self._blend_shown = blend
+        self.blend_panel.set_loading(blend)
+
+        class Job(QtCore.QThread):
+            done = QtCore.Signal(str, dict)
+
+            def run(self):
+                try:
+                    self.done.emit(blend, api.blend_info(blend, refresh))
+                except Exception as e:
+                    self.done.emit(blend, {"error": str(e)})
+
+        job = Job(self)
+        job.done.connect(self._blend_info_ready)
+        job.finished.connect(job.deleteLater)
+        self._blend_jobs.append(job)
+        job.start()
+
+    @QtCore.Slot(str, dict)
+    def _blend_info_ready(self, blend, info):
+        if blend == self._blend_shown:      # ignore a stale answer
+            self.blend_panel.set_info(info)
+
+    def _log_panel(self):
+        self.log_panel = panels.LogPanel()
+        return self.log_panel
 
     # ── status ───────────────────────────────────────────────────────────
 
@@ -521,6 +752,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue.set_jobs(queue)
         self._sync_buttons()
 
+        self.gpu_panel.update_gpu(s.get("gpu"))
+        self._update_render_panel(s)
+        self._update_preview(s)
+        if self.docks["Log"].isVisible():
+            self.log_panel.set_lines(s.get("log") or [])
+
         gpu = s.get("gpu") or {}
         if gpu.get("available"):
             self.statusBar().showMessage(
@@ -530,6 +767,40 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"VRAM {round((gpu.get('vram_used') or 0)/1024, 1)} GB")
         else:
             self.statusBar().showMessage("GPU telemetry unavailable")
+
+    def _update_render_panel(self, s):
+        job = s.get("job")
+        tiles = s.get("tiles")
+        last = s.get("last_tile") or {}
+        self.tilemap.set_grid(tiles, last.get("name"),
+                              theme.KIND[job_kind(job)] if job else None)
+
+        p = s.get("progress")
+        if p and p.get("total"):
+            unit = p["unit"]
+            self.render_meta.setText(
+                f"{p['done']} of {p['total']} {unit}   ·   {p['percent']}%   ·   "
+                f"{hms(p.get('avg_tile_s'))} per {unit[:-1]}   ·   "
+                f"ETA {hms(p.get('eta_s'))}")
+        else:
+            self.render_meta.setText("")
+
+    def _update_preview(self, s):
+        if not self.docks["Preview"].isVisible() or \
+                not self.preview.enabled.isChecked():
+            return
+        last = s.get("last_tile")
+        if not last:
+            self.preview.set_image(None)
+            self._tile_stamp = None
+            return
+        # Only refetch when the file on disk actually changed.
+        if last.get("mtime") == self._tile_stamp:
+            return
+        self._tile_stamp = last.get("mtime")
+        self.preview.set_image(
+            api.tile_bytes(),
+            f"{last.get('name','')} · {last.get('age_s', 0)}s ago")
 
     @QtCore.Slot(str)
     def on_server_down(self, why):
@@ -569,6 +840,12 @@ class MainWindow(QtWidgets.QMainWindow):
         has_job = bool(job or s.get("job"))
         self.act_open_blend_dir.setEnabled(has_job)
         self.act_open_out_dir.setEnabled(has_job)
+
+        # The .blend panel follows the selection, falling back to whatever is
+        # rendering when nothing is picked.
+        blend = (job or s.get("job") or {}).get("blend")
+        if blend != self._blend_shown:
+            self._load_blend_info(blend)
 
     # ── actions ──────────────────────────────────────────────────────────
 
@@ -653,6 +930,7 @@ class MainWindow(QtWidgets.QMainWindow):
         reachable from the phone. Same rule as the browser version, made
         explicit here because the X is now the only way out.
         """
+        self._save_layout()
         self.poller.stop()
         try:
             if not (self._last.get("busy")):

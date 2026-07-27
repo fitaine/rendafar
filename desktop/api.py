@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -132,6 +133,15 @@ def new_job(body):
 
 def quit_server(force=False):
     return _call("/api/quit", {"force": force})
+
+
+def blend_info(path, refresh=False):
+    """
+    The .blend's own settings. Slow the first time (Blender has to open the
+    file), instant afterwards — the server caches by path and mtime.
+    """
+    q = urllib.parse.urlencode({"path": path, "refresh": "1" if refresh else "0"})
+    return _call(f"/api/blendinfo?{q}", timeout=200)
 
 
 def tile_bytes():

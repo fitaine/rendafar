@@ -192,6 +192,63 @@ def stylesheet():
         padding: 8px;
     }}
 
+    /* Panels. The title bar is the grab handle, so it has to look like one. */
+    QDockWidget {{
+        color: {DIM};
+        font-family: "{DISPLAY}";
+        font-size: 10px;
+        titlebar-close-icon: none;
+        titlebar-normal-icon: none;
+    }}
+    /* The title bar is a real widget (see CollapsibleDock), so it is styled
+       here rather than through QDockWidget::title. */
+    QWidget#dockTitle {{
+        background: {PANEL};
+        border: 1px solid {LINE};
+        border-top-left-radius: 9px;
+        border-top-right-radius: 9px;
+    }}
+    QWidget#dockTitle QToolButton {{
+        background: transparent; border: none; border-radius: 4px;
+        color: {DIM};
+    }}
+    QWidget#dockTitle QToolButton:hover {{ background: {ROCK}; color: {INK}; }}
+    QDockWidget > QWidget {{
+        background: {PANEL};
+        border: 1px solid {LINE};
+        border-top: none;
+        border-bottom-left-radius: 9px;
+        border-bottom-right-radius: 9px;
+    }}
+    QDockWidget::close-button, QDockWidget::float-button {{
+        background: transparent; border: none; padding: 2px;
+        subcontrol-position: top right; subcontrol-origin: margin;
+    }}
+    QDockWidget::close-button:hover, QDockWidget::float-button:hover {{
+        background: {ROCK}; border-radius: 4px;
+    }}
+    QMainWindow::separator {{ background: {BG}; width: 6px; height: 6px; }}
+    QMainWindow::separator:hover {{ background: {GLACIER_D}; }}
+
+    /* Tabs, for panels docked on top of each other. */
+    QTabBar::tab {{
+        background: {PANEL_2};
+        color: {DIM};
+        border: 1px solid {LINE};
+        border-bottom: none;
+        border-top-left-radius: 7px;
+        border-top-right-radius: 7px;
+        padding: 7px 14px;
+        margin-right: 2px;
+        font-family: "{DISPLAY}";
+        font-size: 10px;
+        /* Without a minimum, Qt shrinks dock tabs until the label elides to
+           "G…" and the panel becomes unidentifiable. */
+        min-width: 76px;
+    }}
+    QTabBar::tab:selected {{ background: {PANEL}; color: {INK}; }}
+    QTabBar::tab:hover:!selected {{ color: {INK}; }}
+
     QSplitter::handle {{ background: transparent; }}
     QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
     QScrollBar::handle:vertical {{ background: {ROCK}; border-radius: 5px;
@@ -199,6 +256,13 @@ def stylesheet():
     QScrollBar::handle:vertical:hover {{ background: {GLACIER_D}; }}
     QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
     QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+    QToolBar#headerbar {{
+        background: {BG};
+        border: none;
+        border-bottom: 1px solid {LINE};
+        spacing: 0;
+    }}
 
     QMenuBar {{
         background: {BG};

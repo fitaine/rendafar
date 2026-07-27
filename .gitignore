@@ -47,3 +47,9 @@ local_python.bat
 qt_out.txt
 qt_err.txt
 
+
+# Test scenes: real .blend files, gigabytes each, and Tiphaine's own work.
+examples/
+
+# Probed .blend settings and other derived data - regenerated on demand.
+cache/

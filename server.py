@@ -269,6 +269,15 @@ class Handler(BaseHTTPRequestHandler):
                                   "render PC."}, 403)
                 p = parse_qs(u.query).get("path", [""])[0]
                 return self._json(browse.listing(p))
+            if path == "/api/blendinfo":
+                # Local only: it runs Blender and reads a path off this disk.
+                if not self._is_local():
+                    return self._json({"error": "Local only."}, 403)
+                import blend_info
+                q = parse_qs(u.query)
+                return self._json(blend_info.read(
+                    q.get("path", [""])[0],
+                    refresh=q.get("refresh", ["0"])[0] == "1"))
             if path == "/api/tile":
                 return self._tile()
             if path == "/sw.js":
