@@ -53,3 +53,5 @@ examples/
 
 # Probed .blend settings and other derived data - regenerated on demand.
 cache/
+# Logo source art - the exported PNG is enough for the app.
+static/*.psd
