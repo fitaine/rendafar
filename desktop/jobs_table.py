@@ -66,26 +66,64 @@ class KindStripe(QtWidgets.QStyledItemDelegate):
         painter.restore()
 
 
+class FolderEdit(QtWidgets.QWidget):
+    """A path field with a folder picker beside it."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self.line = QtWidgets.QLineEdit(self)
+        self.line.setFrame(False)
+        btn = QtWidgets.QToolButton(self)
+        btn.setText("…")
+        btn.setToolTip("Choose a folder")
+        btn.clicked.connect(self._pick)
+        lay.addWidget(self.line, 1)
+        lay.addWidget(btn)
+        self.setFocusProxy(self.line)
+
+    def _pick(self):
+        start = self.line.text().strip() or os.path.expanduser("~")
+        if not os.path.isdir(start):
+            start = os.path.dirname(start) or os.path.expanduser("~")
+        d = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Where should this render write?", start)
+        if d:
+            self.line.setText(os.path.normpath(d))
+
+    def text(self):
+        return self.line.text()
+
+    def setText(self, t):
+        self.line.setText(t)
+
+
 class CellEditor(QtWidgets.QStyledItemDelegate):
     """
-    Editors that match the setting: a dropdown for a choice, a line for a value.
+    Editors that match the setting: a dropdown for a choice, a folder picker
+    for a path, a line for anything else.
 
-    The camera dropdown is the one that matters — the test scene has six
-    cameras, and which is active decides what the render actually shows.
+    The camera dropdown is the one that matters most — the example scenes have
+    six cameras between them, and which is active decides what the render
+    actually shows.
     """
 
-    edited = QtCore.Signal(str, str, object)      # job_id, config key, value
+    edited = QtCore.Signal(str, str, object, str)   # job_id, key, value, type
 
     def createEditor(self, parent, option, index):
         spec = index.data(ROLE_EDIT)
         if not spec:
             return None
-        _job_id, _key, kind, choices = spec
+        _job_id, _key, kind, choices, _type = spec
         if kind == "choice":
             box = QtWidgets.QComboBox(parent)
             box.addItems(choices)
             box.setEditable(False)
             return box
+        if kind == "folder":
+            return FolderEdit(parent)
         return QtWidgets.QLineEdit(parent)
 
     def setEditorData(self, editor, index):
@@ -94,16 +132,16 @@ class CellEditor(QtWidgets.QStyledItemDelegate):
             i = editor.findText(value)
             editor.setCurrentIndex(max(0, i))
         else:
-            editor.setText("" if value in ("—", "") else value)
+            editor.setText("" if value in ("—", "…") else value)
 
     def setModelData(self, editor, model, index):
         spec = index.data(ROLE_EDIT)
         if not spec:
             return
-        job_id, key, kind, _ = spec
+        job_id, key, _kind, _choices, job_type = spec
         value = editor.currentText() if isinstance(editor, QtWidgets.QComboBox) \
             else editor.text().strip()
-        self.edited.emit(job_id, key, value)
+        self.edited.emit(job_id, key, value, job_type)
 
 
 class JobsTable(QtWidgets.QTableWidget):
@@ -164,7 +202,7 @@ class JobsTable(QtWidgets.QTableWidget):
 
     def _cell(self, row, key, text, *, editable=False, job=None,
               cfg_key=None, kind="text", choices=(), locked_why="",
-              colour=None, mono=False):
+              colour=None, mono=False, tip=""):
         item = QtWidgets.QTableWidgetItem(text)
         if colour:
             item.setForeground(QtGui.QColor(colour))
@@ -173,8 +211,9 @@ class JobsTable(QtWidgets.QTableWidget):
         flags = QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled
         if editable:
             flags |= QtCore.Qt.ItemIsEditable
-            item.setData(ROLE_EDIT, (job["id"], cfg_key, kind, list(choices)))
-            item.setToolTip("Double-click to change")
+            item.setData(ROLE_EDIT, (job["id"], cfg_key, kind, list(choices),
+                                     job.get("type", "tiled")))
+            item.setToolTip(tip or "Double-click to change")
         elif locked_why:
             item.setToolTip(locked_why)
             item.setForeground(QtGui.QColor(theme.FAINT))
@@ -237,12 +276,18 @@ class JobsTable(QtWidgets.QTableWidget):
                    choices=["WEBP", "JPEG", "PNG"],
                    locked_why=why or ("Comes from the .blend" if classic else ""))
 
+        # The cell shows the folder the render actually writes to, and editing
+        # it sets that same folder. For a tiled job that means splitting the
+        # path back into OUTPUT_DIR + RENDER_NAME, because the script joins
+        # them — writing the whole path into RENDER_NAME would nest it inside
+        # itself and produce a path that goes nowhere.
         out = (job.get("output_dir") or cfg.get("OUTPUT_DIR")
                or info.get("filepath") or ("…" if unknown else "—"))
         self._cell(row, "output", out, mono=True,
-                   editable=can_edit, job=job,
-                   cfg_key="OUTPUT_DIR" if classic else "RENDER_NAME",
-                   locked_why=why)
+                   editable=can_edit, job=job, cfg_key="_OUTPUT", kind="folder",
+                   locked_why=why,
+                   tip="Where this render writes — double-click, or use … to "
+                       "pick a folder")
 
     @staticmethod
     def _frames_text(job, info, unknown):
@@ -257,13 +302,17 @@ class JobsTable(QtWidgets.QTableWidget):
 
     # ── editing ──────────────────────────────────────────────────────────
 
-    def _apply_edit(self, job_id, key, value):
+    def _apply_edit(self, job_id, key, value, job_type="tiled"):
         if key == "_FRAMES":
             changes = self._parse_frames(value)
             if changes is None:
                 self.error.emit("Frames should look like 1-300, or a single "
                                 "number for a still.")
                 return
+        elif key == "_OUTPUT":
+            # Sent as-is; the server splits it into OUTPUT_DIR / RENDER_NAME
+            # according to the job type (see paths.split_output).
+            changes = {"_OUTPUT": value}
         else:
             changes = {key: value}
         try:

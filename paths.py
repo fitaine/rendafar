@@ -33,6 +33,36 @@ def output_dir_for(blend_path, output_dir="//tiles/", render_name=""):
     return os.path.join(blender_abspath(output_dir, blend_path), name)
 
 
+def split_output(value, job_type):
+    """
+    Turn a folder into the settings the render script expects.
+
+    The UI shows one thing — the folder a render writes to — but the two script
+    types store it differently. A classic render writes straight to OUTPUT_DIR.
+    A tiled render joins OUTPUT_DIR with RENDER_NAME, so the folder has to be
+    split into its parent and its last component; putting the whole path in
+    RENDER_NAME would nest it inside itself and the render would write
+    somewhere nobody thinks to look.
+
+    Lives here rather than in the UI so it can be tested without Qt, and so
+    there is one answer rather than one per front end.
+    """
+    value = (value or "").strip().strip('"')
+    if not value:
+        # Empty means "back to the default": the .blend's own output path for a
+        # classic render, //tiles/<blend name> for a tiled one.
+        return {"OUTPUT_DIR": "", "RENDER_NAME": ""} if job_type == "tiled" \
+            else {"OUTPUT_DIR": ""}
+    if job_type != "tiled":
+        return {"OUTPUT_DIR": value}
+
+    value = os.path.normpath(value)
+    parent, name = os.path.split(value.rstrip("\\/"))
+    if not parent or not name:
+        return {"OUTPUT_DIR": value}          # a drive root: keep it whole
+    return {"OUTPUT_DIR": parent, "RENDER_NAME": name}
+
+
 def classic_manifest_path(job):
     """
     Classic jobs keep their manifest beside the job file, not in the render

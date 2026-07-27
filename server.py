@@ -443,7 +443,13 @@ class Handler(BaseHTTPRequestHandler):
                 f"new job instead.")
 
         allowed = self.EDITABLE.get(job.get("type"), set())
-        changes = body.get("config") or {}
+        changes = dict(body.get("config") or {})
+
+        # "_OUTPUT" is the folder as the UI shows it. Translating it here means
+        # the split lives in one place and every front end gets it right.
+        if "_OUTPUT" in changes:
+            changes.update(paths.split_output(changes.pop("_OUTPUT"),
+                                              job.get("type")))
         for key in changes:
             if key not in allowed:
                 raise ValueError(
