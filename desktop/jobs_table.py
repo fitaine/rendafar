@@ -177,21 +177,56 @@ class JobsTable(QtWidgets.QTableWidget):
 
         self.cellClicked.connect(self._explain_locked)
         self._ids = []
-        self._blend = {}                    # blend path -> info dict
+        self._pending = None                # refresh held back during an edit
+        self._blend = {}                    # blend path -> (mtime, info)
+
+        # Editors are cramped at default row height; give them room to type in.
+        self.verticalHeader().setDefaultSectionSize(30)
 
     # ── data in ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _mtime(path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0
+
     def set_blend_info(self, blend, info):
-        self._blend[blend] = info
+        self._blend[blend] = (self._mtime(blend), info)
 
     def blend_known(self, blend):
-        return blend in self._blend
+        """
+        True only if the file has not changed since it was read.
+
+        Keyed by modification time, not just path: saving the .blend in Blender
+        has to invalidate this, or the app keeps showing the settings the file
+        had when it was first seen. That is exactly what happened — an output
+        path was changed in Blender, saved, and a new job still showed the old
+        one.
+        """
+        hit = self._blend.get(blend)
+        return bool(hit) and hit[0] == self._mtime(blend)
+
+    def _info_for(self, blend):
+        hit = self._blend.get(blend)
+        return hit[1] if hit else None
 
     def selected_job_id(self):
         r = self.currentRow()
         return self._ids[r] if 0 <= r < len(self._ids) else None
 
     def set_jobs(self, jobs):
+        # Never rebuild while a cell is open for editing. The poller refreshes
+        # every two seconds, and recreating the items underneath an editor
+        # destroys it — which is why a field could only be typed in for a
+        # moment before closing itself. The next refresh picks up whatever
+        # changed once editing is finished.
+        if self.state() == QtWidgets.QAbstractItemView.EditingState:
+            self._pending = jobs
+            return
+        self._pending = None
+
         keep = self.selected_job_id()
         self._ids = [j["id"] for j in jobs]
         self.setRowCount(len(jobs))
@@ -199,6 +234,13 @@ class JobsTable(QtWidgets.QTableWidget):
             self._fill_row(row, job)
         if keep in self._ids:
             self.selectRow(self._ids.index(keep))
+
+    def closeEditor(self, editor, hint):
+        """Apply any refresh that was held back while the editor was open."""
+        super().closeEditor(editor, hint)
+        if self._pending is not None:
+            pending, self._pending = self._pending, None
+            QtCore.QTimer.singleShot(0, lambda: self.set_jobs(pending))
 
     def _cell(self, row, key, text, *, editable=False, job=None,
               cfg_key=None, kind="text", choices=(), locked_why="",
@@ -224,7 +266,7 @@ class JobsTable(QtWidgets.QTableWidget):
     def _fill_row(self, row, job):
         kind = job_kind(job)
         cfg = job.get("config") or {}
-        info = self._blend.get(job.get("blend")) or {}
+        info = self._info_for(job.get("blend")) or {}
         unknown = not info or bool(info.get("error"))
 
         # Editing is only safe before anything has been rendered.
@@ -290,15 +332,31 @@ class JobsTable(QtWidgets.QTableWidget):
                        "pick a folder")
 
     @staticmethod
-    def _frames_text(job, info, unknown):
+    def _first(*values):
+        """
+        First value that was actually given.
+
+        Not `a or b`: frame 0 is a real frame number, and `or` treats it as
+        missing — which showed "…" for a scene genuinely sitting on frame 0.
+        """
+        for v in values:
+            if v is not None and v != "":
+                return v
+        return None
+
+    @classmethod
+    def _frames_text(cls, job, info, unknown):
         cfg = job.get("config") or {}
         if job.get("type") != "classic":
             return "—"
         if cfg.get("MODE") == "still":
-            return str(cfg.get("FRAME") or info.get("frame_current") or "…")
-        a = cfg.get("FRAME_START") or info.get("frame_start")
-        b = cfg.get("FRAME_END") or info.get("frame_end")
-        return f"{a}-{b}" if a and b else ("…" if unknown else "—")
+            f = cls._first(cfg.get("FRAME"), info.get("frame_current"))
+            return str(f) if f is not None else ("…" if unknown else "—")
+        a = cls._first(cfg.get("FRAME_START"), info.get("frame_start"))
+        b = cls._first(cfg.get("FRAME_END"), info.get("frame_end"))
+        if a is None or b is None:
+            return "…" if unknown else "—"
+        return f"{a}-{b}"
 
     # ── editing ──────────────────────────────────────────────────────────
 
@@ -338,6 +396,20 @@ class JobsTable(QtWidgets.QTableWidget):
             return {"FRAME": int(text)}
         except ValueError:
             return None
+
+    def mousePressEvent(self, e):
+        """
+        Clicking empty space clears the selection.
+
+        Qt keeps the current row selected otherwise, so with a single job there
+        was no way to deselect it at all.
+        """
+        if not self.indexAt(e.pos()).isValid():
+            self.clearSelection()
+            self.setCurrentIndex(QtCore.QModelIndex())
+            e.accept()
+            return
+        super().mousePressEvent(e)
 
     def _explain_locked(self, row, col):
         """A locked cell should say why, not just refuse to open."""

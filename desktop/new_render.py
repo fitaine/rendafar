@@ -22,6 +22,14 @@ KINDS = [
     ("still",     "Still",      "A single frame"),
 ]
 
+# Matches the stripe colours in the Jobs table, so the type chosen here and the
+# row it becomes are recognisably the same thing.
+KIND_COLOUR = {
+    "tiled":     theme.KIND["tiled"],
+    "animation": theme.KIND["animation"],
+    "still":     theme.KIND["still"],
+}
+
 
 class NewRenderDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, blend=""):
@@ -72,20 +80,33 @@ class NewRenderDialog(QtWidgets.QDialog):
         self.name_edit.setPlaceholderText("taken from the file name")
         lay.addWidget(self.name_edit)
 
-        # Kind
+        # Kind — buttons, and nothing chosen to begin with.
+        #
+        # A dropdown always has something selected, so it is possible to create
+        # a render without ever looking at the type and get whatever happened
+        # to be first. Nothing is preselected here and the dialog will not
+        # submit until one is picked, which makes it a decision.
         lay.addWidget(self._label("Type"))
-        self.kind_box = QtWidgets.QComboBox()
-        for key, label, tip in KINDS:
-            self.kind_box.addItem(label, key)
-            self.kind_box.setItemData(self.kind_box.count() - 1, tip,
-                                      QtCore.Qt.ToolTipRole)
-        self.kind_box.currentIndexChanged.connect(self._kind_changed)
-        lay.addWidget(self.kind_box)
+        self.kind_group = QtWidgets.QButtonGroup(self)
+        self.kind_group.setExclusive(True)
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        for i, (key, label, tip) in enumerate(KINDS):
+            b = QtWidgets.QPushButton(label)
+            b.setCheckable(True)
+            b.setToolTip(tip)
+            b.setProperty("kindKey", key)
+            b.setProperty("kindColour", KIND_COLOUR[key])
+            self.kind_group.addButton(b, i)
+            row.addWidget(b, 1)
+        self.kind_group.idClicked.connect(self._kind_chosen)
+        lay.addLayout(row)
 
         self.pages = QtWidgets.QStackedWidget()
         self.pages.addWidget(self._page_tiled())
         self.pages.addWidget(self._page_animation())
         self.pages.addWidget(self._page_still())
+        self.pages.setVisible(False)          # nothing to show until a choice
         lay.addWidget(self.pages)
 
         note = QtWidgets.QLabel(
@@ -201,7 +222,7 @@ class NewRenderDialog(QtWidgets.QDialog):
         the server — never from a copy of that maths.
         """
         blend = self.blend_edit.text().strip().strip('"')
-        if self.kind_box.currentData() != "tiled" or not os.path.isfile(blend):
+        if self.kind() != "tiled" or not os.path.isfile(blend):
             self.grid_note.setText("")
             return
         self.grid_note.setText("working it out…")
@@ -253,9 +274,22 @@ class NewRenderDialog(QtWidgets.QDialog):
 
     # ── picking a file ───────────────────────────────────────────────────
 
-    def _kind_changed(self, index):
+    def _kind_chosen(self, index):
+        self.pages.setVisible(True)
         self.pages.setCurrentIndex(index)
+        for b in self.kind_group.buttons():
+            colour = b.property("kindColour")
+            b.setStyleSheet(
+                f"QPushButton {{ background:{colour}; color:#08131A;"
+                f"border-color:{colour}; font-weight:600; }}"
+                if b.isChecked() else "")
+        self._validate()
         self._grid_timer.start()
+
+    def kind(self):
+        """The chosen type, or None while nothing has been picked."""
+        b = self.kind_group.checkedButton()
+        return b.property("kindKey") if b else None
 
     def browse(self):
         """A real Windows file dialog — Qt's is the native one."""
@@ -294,17 +328,19 @@ class NewRenderDialog(QtWidgets.QDialog):
 
     def _validate(self):
         p = self.blend_edit.text().strip().strip('"')
-        ok = p.lower().endswith(".blend") and os.path.isfile(p)
-        self.ok.setEnabled(ok)
-        if p and not ok:
+        has_file = p.lower().endswith(".blend") and os.path.isfile(p)
+        # Both a file AND a type: the type is never assumed.
+        self.ok.setEnabled(has_file and self.kind() is not None)
+        self.ok.setToolTip("" if self.kind() else "Choose a type first")
+        if p and not has_file:
             self.blend_edit.setToolTip("No .blend file at that path")
         else:
             self.blend_edit.setToolTip("")
-        if ok:
+        if has_file:
             self._grid_timer.start()      # a new file means a new grid
 
     def payload(self):
-        kind = self.kind_box.currentData()
+        kind = self.kind()
         body = {
             "blend": self.blend_edit.text().strip().strip('"'),
             "name":  self.name_edit.text().strip(),

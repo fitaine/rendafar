@@ -11,29 +11,41 @@ from PySide6 import QtGui
 
 # ── Palette ──────────────────────────────────────────────────────────────────
 
+# Blender's own palette: orange #EA7601, cyan #266C87, white.
+#
+# #266C87 is dark — as small text on this near-black ground it is close to
+# unreadable, so it is used where it belongs (fills, bars, borders, the tile
+# map) and a lighter tint of the same hue carries text. That keeps the identity
+# Blender's without making the app hard to read.
+BL_ORANGE   = "#EA7601"   # Blender orange
+BL_CYAN     = "#266C87"   # Blender cyan
+BL_CYAN_LIT = "#7FBBD6"   # same hue, lifted for text on a dark ground
+WHITE       = "#FFFFFF"
+
 BG        = "#0B0F14"   # window ground
 PANEL     = "#121A23"   # cards
 PANEL_2   = "#0F161E"   # insets, inputs
-LINE      = "#1F2A36"   # borders
-LINE_SOFT = "#18212B"   # separators inside a card
+LINE      = "#22323D"   # borders — a hint of the cyan
+LINE_SOFT = "#1A2830"   # separators inside a card
 
-INK       = "#E8EFF5"   # primary text
-DIM       = "#8194A6"   # labels
-FAINT     = "#5A6B7C"   # captions
+INK       = "#EEF4F8"   # primary text, near white
+DIM       = "#8AA2B0"   # labels
+FAINT     = "#5F7480"   # captions
 
-GLACIER   = "#9FD4E8"   # done / primary action
-GLACIER_D = "#3C6478"
-AMBER     = "#FFB13B"   # happening right now
-ROCK      = "#243040"   # pending
+GLACIER   = BL_CYAN_LIT # done / primary action
+GLACIER_D = BL_CYAN     # its dark partner: borders, bar troughs, hovers
+AMBER     = BL_ORANGE   # happening right now
+ROCK      = "#22323D"   # pending
 ALERT     = "#E5534B"   # wrong
 GOOD      = "#68C08A"   # finished well
 
-# One hue per kind of render, chosen away from amber and red so a kind can
-# never be misread as a state.
+# One hue per kind of render. Tiled gets Blender's cyan because it is the
+# flagship; the other two stay clear of orange and red so a kind can never be
+# misread as a state.
 KIND = {
-    "tiled":     "#9FD4E8",   # glacier — the 120k renders
-    "animation": "#B0A7E6",   # periwinkle
-    "still":     "#86BE86",   # moss
+    "tiled":     BL_CYAN_LIT,   # Blender cyan — the 120k renders
+    "animation": "#B0A7E6",     # periwinkle
+    "still":     "#86BE86",     # moss
 }
 
 STATE_COLOUR = {

@@ -147,6 +147,8 @@ class CollapsibleDock(QtWidgets.QDockWidget):
         bar.mouseDoubleClickEvent = lambda e: self.toggle_collapsed()
         self.setTitleBarWidget(bar)
 
+    MAX = 16777215          # Qt's QWIDGETSIZE_MAX
+
     def toggle_collapsed(self):
         w = self.widget()
         if w is None:
@@ -157,15 +159,23 @@ class CollapsibleDock(QtWidgets.QDockWidget):
             QtCore.Qt.RightArrow if self._collapsed else QtCore.Qt.DownArrow)
         self._chevron.setToolTip(
             "Expand this panel" if self._collapsed else "Collapse this panel")
+
         if self._collapsed:
-            # Pin the height to the title bar, or the dock keeps its old size
-            # and leaves a hole where the content used to be.
             self._sizes = (self.minimumHeight(), self.maximumHeight())
-            self.setFixedHeight(self.titleBarWidget().sizeHint().height() + 2)
+            # Cap the HEIGHT only, and never with setFixedHeight: that also
+            # freezes the minimum, and a collapsed panel then held its column
+            # at whatever width it had, which could not be dragged wider again.
+            # Width is left entirely free.
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(self.titleBarWidget().sizeHint().height() + 2)
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(self.MAX)
         else:
-            lo, hi = self._sizes or (0, 16777215)
+            lo, hi = self._sizes or (0, self.MAX)
             self.setMinimumHeight(lo)
-            self.setMaximumHeight(hi)
+            self.setMaximumHeight(hi if hi else self.MAX)
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(self.MAX)
 
     def is_collapsed(self):
         return self._collapsed
@@ -178,10 +188,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(880, 560)
         self.resize(1180, 760)
 
-        icon = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), "static", "rendafar.ico")
-        if os.path.isfile(icon):
-            self.setWindowIcon(QtGui.QIcon(icon))
+        # Tiphaine's own logo — Adobe-suite lettering in Blender's colours —
+        # in preference to the generated tile-grid icon.
+        static = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "static")
+        for name in ("icon-256.png", "rendafar.ico"):
+            path = os.path.join(static, name)
+            if os.path.isfile(path):
+                self.setWindowIcon(QtGui.QIcon(path))
+                break
 
         # Qt hands over a dropped file's real path — the thing a web page is
         # never allowed to see, and the reason this window exists.
@@ -221,6 +236,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not getattr(self, "_sized", False):
             self._sized = True
             if not self._had_saved_layout:
+                # Maximised, not fullscreen: the taskbar and title bar stay,
+                # and every panel gets room without anything being hidden.
+                self.showMaximized()
                 QtCore.QTimer.singleShot(0, self._size_docks)
 
     def _save_layout(self):
