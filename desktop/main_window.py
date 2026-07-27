@@ -17,20 +17,10 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import config
 
 from . import api, panels, theme
+from .jobs_table import JobsTable, job_kind
 from .poller import Poller
 
 KIND_LABEL = {"tiled": "Tiled 120k", "animation": "Animation", "still": "Still"}
-
-
-def job_kind(job):
-    """One of tiled / animation / still. Derived in one place so the colour,
-    the label and the icon can never disagree."""
-    if not job:
-        return "tiled"
-    if job.get("type") == "classic":
-        return "still" if (job.get("config") or {}).get("MODE") == "still" \
-            else "animation"
-    return "tiled"
 
 
 def hms(seconds):
@@ -181,93 +171,6 @@ class CollapsibleDock(QtWidgets.QDockWidget):
         return self._collapsed
 
 
-class KindStripe(QtWidgets.QStyledItemDelegate):
-    """
-    Paints the render-kind colour bar in the queue's first column.
-
-    A delegate rather than an item background: the stylesheet gives cells
-    7px/8px padding, which is wider than the stripe column, so a plain
-    background collapsed to nothing and the colour never appeared.
-    """
-
-    def paint(self, painter, option, index):
-        colour = index.data(QtCore.Qt.UserRole)
-        if not colour:
-            return
-        r = option.rect
-        painter.save()
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(QtGui.QColor(colour))
-        bar = QtCore.QRectF(r.left() + 1, r.top() + 5, 4, max(6, r.height() - 10))
-        painter.drawRoundedRect(bar, 2, 2)
-        painter.restore()
-
-
-class QueueTable(QtWidgets.QTableWidget):
-    """
-    The queue. A coloured stripe per row carries the render kind, so the type
-    of work is readable without parsing the name.
-    """
-
-    COLS = ["", "State", "Name", "Progress"]
-
-    def __init__(self, parent=None):
-        super().__init__(0, len(self.COLS), parent)
-        self.setHorizontalHeaderLabels(self.COLS)
-        self.verticalHeader().setVisible(False)
-        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.setShowGrid(False)
-        self.setWordWrap(False)
-        h = self.horizontalHeader()
-        h.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
-        self.setColumnWidth(0, 8)
-        self.setItemDelegateForColumn(0, KindStripe(self))
-        h.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        h.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
-        self._ids = []
-
-    def selected_job_id(self):
-        r = self.currentRow()
-        return self._ids[r] if 0 <= r < len(self._ids) else None
-
-    def set_jobs(self, jobs):
-        keep = self.selected_job_id()
-        self._ids = [j["id"] for j in jobs]
-        self.setRowCount(len(jobs))
-
-        for row, job in enumerate(jobs):
-            kind = job_kind(job)
-
-            stripe = QtWidgets.QTableWidgetItem("")
-            stripe.setData(QtCore.Qt.UserRole, theme.KIND[kind])
-            stripe.setToolTip(KIND_LABEL[kind])
-            self.setItem(row, 0, stripe)
-
-            state = QtWidgets.QTableWidgetItem(job.get("state", "?"))
-            state.setForeground(QtGui.QColor(
-                theme.STATE_COLOUR.get(job.get("state"), theme.DIM)))
-            state.setFont(theme.font(theme.MONO, 9))
-            self.setItem(row, 1, state)
-
-            name = QtWidgets.QTableWidgetItem(job.get("name", ""))
-            name.setToolTip(job.get("output_dir") or job.get("blend", ""))
-            self.setItem(row, 2, name)
-
-            p = job.get("progress")
-            txt = f"{p['done']}/{p['total']} {p['unit']}" if p and p.get("total") else ""
-            prog = QtWidgets.QTableWidgetItem(txt)
-            prog.setFont(theme.font(theme.MONO, 9))
-            prog.setForeground(QtGui.QColor(theme.DIM))
-            self.setItem(row, 3, prog)
-
-        if keep in self._ids:
-            self.selectRow(self._ids.index(keep))
-
-
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -286,7 +189,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._last = {}
         self._tile_stamp = None
-        self._blend_shown = None
+        self._blend_pending = set()
         self._blend_jobs = []
         self._build_menus()
         self._build()
@@ -326,8 +229,8 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("windowState", self.saveState())
 
     def _size_docks(self):
-        self.resizeDocks([self.docks["Queue"], self.docks["Render"]],
-                         [430, 620], QtCore.Qt.Horizontal)
+        self.resizeDocks([self.docks["Jobs"], self.docks["Render"]],
+                         [780, 460], QtCore.Qt.Horizontal)
 
     def reset_layout(self):
         """Put every panel back, including any that were closed."""
@@ -586,8 +489,9 @@ class MainWindow(QtWidgets.QMainWindow):
                             QtWidgets.QMainWindow.AllowNestedDocks |
                             QtWidgets.QMainWindow.AllowTabbedDocks)
 
-        self._dock("Queue",   self._queue_panel(),   QtCore.Qt.LeftDockWidgetArea)
-        self._dock("Blend",   self._blend_panel(),   QtCore.Qt.LeftDockWidgetArea)
+        # Queue and .blend settings in one table: they describe the same jobs,
+        # and two panels meant reading one while remembering the other.
+        self._dock("Jobs",    self._queue_panel(),   QtCore.Qt.LeftDockWidgetArea)
         self._dock("Render",  self._render_panel(),  QtCore.Qt.RightDockWidgetArea)
         self._dock("Preview", self._preview_panel(), QtCore.Qt.RightDockWidgetArea)
         self._dock("GPU",     self._gpu_panel(),     QtCore.Qt.RightDockWidgetArea)
@@ -624,8 +528,11 @@ class MainWindow(QtWidgets.QMainWindow):
         top.addStretch(1)
         p.lay.addLayout(top)
 
-        self.queue = QueueTable()
+        self.queue = JobsTable()
         self.queue.itemSelectionChanged.connect(self._sync_buttons)
+        self.queue.changed.connect(lambda: self.poller.refresh_now())
+        self.queue.error.connect(
+            lambda msg: self.statusBar().showMessage(msg, 8000))
         p.lay.addWidget(self.queue, 1)
 
         row = QtWidgets.QHBoxLayout()
@@ -665,27 +572,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gpu_panel = panels.GpuPanel()
         return self.gpu_panel
 
-    def _blend_panel(self):
-        self.blend_panel = panels.BlendPanel()
-        self.blend_panel.refresh_btn.clicked.connect(
-            lambda: self._load_blend_info(self._blend_shown, refresh=True))
-        return self.blend_panel
-
     # ── .blend settings ──────────────────────────────────────────────────
 
     def _load_blend_info(self, blend, refresh=False):
         """
         Fetch a .blend's settings without freezing the window.
 
-        Blender has to open the file, which is seconds the first time, so it
-        happens on a worker and the answer is dropped if the selection moved on
-        in the meantime.
+        Blender has to open the file, which is a few seconds the first time, so
+        it happens on a worker and the table fills that row in when the answer
+        arrives. Each file is fetched once; the server caches by (path, mtime).
         """
-        if not blend:
-            self.blend_panel.clear()
+        if not blend or (self.queue.blend_known(blend) and not refresh):
             return
-        self._blend_shown = blend
-        self.blend_panel.set_loading(blend)
+        if blend in self._blend_pending:
+            return
+        self._blend_pending.add(blend)
 
         class Job(QtCore.QThread):
             done = QtCore.Signal(str, dict)
@@ -704,8 +605,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(str, dict)
     def _blend_info_ready(self, blend, info):
-        if blend == self._blend_shown:      # ignore a stale answer
-            self.blend_panel.set_info(info)
+        self._blend_pending.discard(blend)
+        self.queue.set_blend_info(blend, info)
+        # Redraw with what just arrived.
+        if self._last.get("queue"):
+            self.queue.set_jobs(self._last["queue"])
+            self._sync_buttons()
 
     def _log_panel(self):
         self.log_panel = panels.LogPanel()
@@ -751,6 +656,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.queue.set_jobs(queue)
         self._sync_buttons()
+
+        # Probe any .blend the table has not seen yet, one per file.
+        for j in queue:
+            self._load_blend_info(j.get("blend"))
 
         self.gpu_panel.update_gpu(s.get("gpu"))
         self._update_render_panel(s)
@@ -840,12 +749,6 @@ class MainWindow(QtWidgets.QMainWindow):
         has_job = bool(job or s.get("job"))
         self.act_open_blend_dir.setEnabled(has_job)
         self.act_open_out_dir.setEnabled(has_job)
-
-        # The .blend panel follows the selection, falling back to whatever is
-        # rendering when nothing is picked.
-        blend = (job or s.get("job") or {}).get("blend")
-        if blend != self._blend_shown:
-            self._load_blend_info(blend)
 
     # ── actions ──────────────────────────────────────────────────────────
 

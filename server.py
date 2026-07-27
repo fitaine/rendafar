@@ -341,6 +341,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(
                         {"error": "The file dialog opens on the render PC."}, 403)
                 return self._pick_file(body)
+            if path == "/api/edit":
+                if not self._is_local():
+                    return self._json({"error": "Local only."}, 403)
+                return self._edit_job(body)
             if path == "/api/new":
                 # Local only, deliberately. Remote is for watching and steering
                 # renders that already exist — never for creating them.
@@ -403,6 +407,58 @@ class Handler(BaseHTTPRequestHandler):
         if not path:
             return self._json({"path": ""})          # cancelled — not an error
         return self._json({"path": path})
+
+    # Settings a job will accept after creation, per type. Anything absent is
+    # absent because the render script has no override for it, or because
+    # changing it would invalidate work already on disk.
+    EDITABLE = {
+        # OUTPUT_DIR is safe to change here only because the guard below
+        # refuses once anything has been rendered; moving the target folder
+        # mid-render would abandon the tiles already written.
+        "tiled":   {"FILE_FORMAT", "RENDER_NAME", "OUTPUT_DIR"},
+        "classic": {"CAMERA", "FRAME", "FRAME_START", "FRAME_END", "FRAME_STEP",
+                    "OUTPUT_DIR", "DEVICE"},
+    }
+
+    def _edit_job(self, body):
+        """
+        Change a queued job's settings.
+
+        Only while it is queued and has produced nothing. Once tiles or frames
+        exist, changing the camera or the frame range would mix two different
+        renders in one folder — the kind of mistake only noticed at the end.
+        """
+        job = qm.load_job(body.get("job_id") or "")
+        if job is None:
+            raise KeyError(body.get("job_id"))
+        if job["state"] != qm.QUEUED:
+            raise ValueError(f"{job['id']} is {job['state']} — only a queued "
+                             f"job can be changed")
+
+        prog = paths.progress(job)
+        if prog and prog.get("done"):
+            raise ValueError(
+                f"{prog['done']} {prog['unit']} already rendered — changing "
+                f"settings now would mix two renders in one folder. Create a "
+                f"new job instead.")
+
+        allowed = self.EDITABLE.get(job.get("type"), set())
+        changes = body.get("config") or {}
+        for key in changes:
+            if key not in allowed:
+                raise ValueError(
+                    f"{key} cannot be changed on a {job.get('type')} job. "
+                    f"Allowed: {', '.join(sorted(allowed)) or 'nothing'}")
+
+        cfg = dict(job.get("config") or {})
+        for key, value in changes.items():
+            if value in ("", None):
+                cfg.pop(key, None)          # empty means "back to the .blend"
+            else:
+                cfg[key] = value
+        job["config"] = cfg
+        qm.save_job(job)
+        return self._json({"job": job})
 
     def _new_job(self, body):
         """

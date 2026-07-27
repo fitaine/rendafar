@@ -131,6 +131,11 @@ def new_job(body):
     return _call("/api/new", body, timeout=30)
 
 
+def edit_job(job_id, config):
+    """Change a queued job's settings. The server enforces what is allowed."""
+    return _call("/api/edit", {"job_id": job_id, "config": config})
+
+
 def quit_server(force=False):
     return _call("/api/quit", {"force": force})
 
