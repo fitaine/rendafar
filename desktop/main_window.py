@@ -208,6 +208,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if os.path.isfile(icon):
             self.setWindowIcon(QtGui.QIcon(icon))
 
+        # Qt hands over a dropped file's real path — the thing a web page is
+        # never allowed to see, and the reason this window exists.
+        self.setAcceptDrops(True)
+
         self._last = {}
         self._build_menus()
         self._build()
@@ -234,8 +238,8 @@ class MainWindow(QtWidgets.QMainWindow):
         m = bar.addMenu("&File")
         self.act_new = m.addAction("&New render…")
         self.act_new.setShortcut(QtGui.QKeySequence.New)
-        self.act_new.setEnabled(False)
-        self.act_new.setStatusTip("Arrives in the next stage, with drag-and-drop")
+        self.act_new.setStatusTip("Pick a .blend, or drop one on the window")
+        self.act_new.triggered.connect(self.do_new)
 
         a = m.addAction("Open the &blend file's folder")
         a.triggered.connect(self.open_blend_folder)
@@ -372,12 +376,14 @@ class MainWindow(QtWidgets.QMainWindow):
         root.addLayout(self._build_header())
         root.addLayout(self._build_status())
 
+        # Queue on the left, the selected render's detail on the right: the
+        # queue is what gets acted on, so it sits where the eye starts.
         split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         split.setChildrenCollapsible(False)
-        split.addWidget(self._build_left())
-        split.addWidget(self._build_right())
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
+        split.addWidget(self._build_queue_card())
+        split.addWidget(self._build_detail_card())
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 3)
         root.addWidget(split, 1)
 
         self.setStatusBar(QtWidgets.QStatusBar())
@@ -428,18 +434,29 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addLayout(btns, 0)
         return row
 
-    def _build_left(self):
-        card = Card("Current render")
+    def _build_detail_card(self):
+        card = Card("Render")
+        self.detail_title = card
         self.placeholder = QtWidgets.QLabel(
-            "The tile map, progress and GPU panel arrive in the next stage.")
+            "Progress, the tile map, the live mosaic and the GPU panel arrive "
+            "in the next stage.")
         self.placeholder.setWordWrap(True)
         self.placeholder.setAlignment(QtCore.Qt.AlignCenter)
         self.placeholder.setStyleSheet(f"color:{theme.FAINT}")
         card.body.addWidget(self.placeholder, 1)
         return card
 
-    def _build_right(self):
+    def _build_queue_card(self):
         card = Card("Queue")
+
+        top = QtWidgets.QHBoxLayout()
+        self.btn_new = QtWidgets.QPushButton("+  New render")
+        self.btn_new.setObjectName("primary")
+        self.btn_new.clicked.connect(self.do_new)
+        top.addWidget(self.btn_new)
+        top.addStretch(1)
+        card.body.addLayout(top)
+
         self.queue = QueueTable()
         self.queue.itemSelectionChanged.connect(self._sync_buttons)
         card.body.addWidget(self.queue, 1)
@@ -563,6 +580,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(d, dict) and d.get("error"):
             return self.warn(d["error"])
         self.poller.refresh_now()
+
+    def do_new(self, blend=""):
+        from .new_render import NewRenderDialog
+        dlg = NewRenderDialog(self, blend=blend or "")
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            self.poller.refresh_now()
+
+    # ── drag and drop ────────────────────────────────────────────────────
+
+    def dragEnterEvent(self, e):
+        from .new_render import NewRenderDialog
+        if NewRenderDialog.dropped_blend(e):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        from .new_render import NewRenderDialog
+        path = NewRenderDialog.dropped_blend(e)
+        if path:
+            e.acceptProposedAction()
+            self.do_new(path)
 
     def do_start(self):
         self._act(api.start)

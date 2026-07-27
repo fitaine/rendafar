@@ -156,6 +156,32 @@ def stylesheet():
         font-size: 10px;
     }}
 
+    QLineEdit, QSpinBox, QComboBox {{
+        background: {PANEL_2};
+        border: 1px solid {LINE};
+        border-radius: 7px;
+        padding: 8px 10px;
+        color: {INK};
+        font-family: "{MONO}";
+        selection-background-color: {GLACIER_D};
+    }}
+    QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{ border-color: {GLACIER_D}; }}
+
+    /* Drop-down and spin arrows are left to Qt.
+       Qt's stylesheets do not support the CSS border-triangle trick — it
+       renders as a small square — and the moment drop-down/up-button is styled
+       at all, Qt stops drawing its own arrow. Fusion's arrows already suit the
+       dark palette, so the least-bad option is not to touch them. */
+    QComboBox QAbstractItemView {{
+        background: {PANEL};
+        border: 1px solid {LINE};
+        selection-background-color: #16202B;
+        color: {INK};
+        padding: 4px;
+    }}
+    QCheckBox {{ color: {DIM}; }}
+    QDialog {{ background: {BG}; }}
+
     QPlainTextEdit {{
         background: #080C11;
         border: 1px solid {LINE_SOFT};
