@@ -58,7 +58,7 @@ pip install Pillow                 # optional, for the preview thumbnail
 python server.py
 ```
 
-Open `http://127.0.0.1:8765`. On Windows, `START RENDAFAR.bat` does both.
+Open `http://127.0.0.1:8765`. On Windows the desktop app (below) starts the server for you.
 
 Rendafar is a normal app — run it when you want it, close the window to stop.
 Optionally run `INSTALL AUTO-RESUME.bat` once: it installs a logon check that does
@@ -101,40 +101,40 @@ optional extra — plenty of people will only ever use it on the machine that re
 Remote access is a bolt-on. Skip the Cloudflare section entirely and everything above
 still works.
 
-### As a desktop app (Windows)
+### The desktop app (Windows)
+
+A native PySide6 application — menu bar, real file dialogs, real drag-and-drop.
 
 ```bat
+pip install PySide6
 python make_icon.py
 INSTALL SHORTCUTS.bat
 ```
 
-Puts Rendafar on the Desktop and in the Start menu with its own icon. Launching it starts
-the server hidden and opens the UI in a chrome-less window. Since there is no console to
-close, the UI carries a **Quit** button; it refuses while a render is running, because
-quitting would leave Blender unsupervised.
+Puts Rendafar on the Desktop and in the Start menu with its own icon; launching it starts
+the server hidden. Closing the window closes Rendafar — unless a render is running, in
+which case the server stays up so the render remains supervised and reachable from your
+phone.
 
-**For the taskbar icon to be Rendafar's own**, install it as an app once: in the Rendafar
-window, browser menu → *Install Rendafar…*. A window opened with `--app=<url>` belongs to
-the browser process, so Windows shows the browser's icon and groups it there; an installed
-app has its own icon and its own taskbar identity. The launcher detects the installed app
-afterwards and uses it automatically.
+**Qt is only needed for this window.** The server, the phone view and the power-cut
+recovery are stdlib-only and keep working without it.
 
 ### Adding a render
 
-Three ways, because a web page is never allowed to see a file's real path:
+- **Drag a `.blend` onto the window**, or onto the desktop icon
+- **`+ New render`** / `Ctrl+N` → *Browse…* opens the native Windows file dialog
+- **`NEW JOB.bat`** — drag a `.blend` onto it for the terminal version
 
-- **Browse** — *+ New render* → *Browse…* picks the `.blend` server-side, so it works from
-  the phone too.
-- **Drag a `.blend` onto the Rendafar desktop icon** — Windows passes the full path, and
-  the New render panel opens with it filled in.
-- **`NEW JOB.bat`** — drag a `.blend` onto it for the terminal version.
+This is the main reason the desktop app exists: a web page is never allowed to see a
+file's real path. `<input type=file>` and dropping onto a page both hand over a filename
+and the file's *contents*, never its location — no use when Blender has to open the file
+where it lives. Qt gives the path.
 
-`<input type=file>` and dropping onto the page itself both give a filename and the file's
-*contents*, never its location — which is no use when Blender has to open the file where
-it lives.
+### From the phone
 
-Quit only appears when you are at the machine. From the phone it is hidden on purpose:
-stopping the server remotely could not be undone remotely.
+Watching and steering only: start, stop, resume, reorder. Creating renders and browsing
+the filesystem are refused unless the request came from the machine itself — nothing is
+gained by exposing them, and a job names an arbitrary file for Blender to open.
 
 ### On Android
 

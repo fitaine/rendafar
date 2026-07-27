@@ -3,7 +3,7 @@
 # Start Menu is what makes it findable in Windows search and pinnable to the
 # taskbar. No admin needed - both locations are per-user.
 #
-# The shortcut runs pythonw.exe (no console) on app_launcher.pyw, which starts
+# The shortcut runs pythonw.exe (no console) on rendafar_app.pyw, which starts
 # the server hidden and opens the UI in its own window.
 
 $ErrorActionPreference = "Stop"
@@ -24,9 +24,12 @@ if (-not $python) { throw "Could not find Python. Create local_python.bat first.
 $pythonw = Join-Path (Split-Path $python -Parent) "pythonw.exe"
 if (-not (Test-Path $pythonw)) { $pythonw = $python }
 
-$target  = Join-Path $app "app_launcher.pyw"
+# The Qt desktop app. The old browser launcher is gone; the web UI is still
+# reachable from the app's View menu and at http://127.0.0.1:8765.
+$target  = Join-Path $app "rendafar_app.pyw"
 $icon    = Join-Path $app "static\rendafar.ico"
 if (-not (Test-Path $icon)) { throw "Icon missing. Run: python make_icon.py" }
+if (-not (Test-Path $target)) { throw "Missing: $target" }
 
 $ws = New-Object -ComObject WScript.Shell
 

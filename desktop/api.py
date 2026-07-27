@@ -43,17 +43,21 @@ def start_server():
     """
     Launch server.py hidden.
 
-    Not RENDAFAR_APP_MODE: that tells the server to close itself once no
-    browser has polled for a while, which is right for a browser window and
-    wrong here — this app polls the same endpoint, and shutting down is decided
-    when this window closes (see MainWindow.closeEvent).
+    RENDAFAR_APP_MODE is set as a safety net, not as the main mechanism:
+    closing the window shuts the server down explicitly (MainWindow.closeEvent).
+    But if this app crashes, nothing would be left to do that, and a hidden
+    server would linger for ever. In app mode the server closes itself once
+    nothing has polled for a while and nothing is rendering — a render, or a
+    phone still watching, always keeps it alive.
     """
     pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     if not os.path.isfile(pyw):
         pyw = sys.executable
+    env = os.environ.copy()
+    env["RENDAFAR_APP_MODE"] = "1"
     subprocess.Popen(
         [pyw, os.path.join(config.APP_DIR, "server.py")],
-        cwd=config.APP_DIR,
+        cwd=config.APP_DIR, env=env,
         creationflags=NO_WINDOW | subprocess.DETACHED_PROCESS,
         close_fds=True,
     )

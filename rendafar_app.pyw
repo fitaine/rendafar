@@ -25,6 +25,20 @@ def die(message, detail=""):
     sys.exit(1)
 
 
+def dropped_blend(argv):
+    """
+    A .blend dragged onto the desktop icon arrives as an argument.
+
+    Windows passes the real path here — the same trick the browser version
+    relied on, kept because dropping a file on the icon is a habit worth not
+    breaking.
+    """
+    for arg in argv:
+        if arg.lower().endswith(".blend") and os.path.isfile(arg):
+            return os.path.abspath(arg)
+    return None
+
+
 def main():
     try:
         from PySide6 import QtWidgets
@@ -51,10 +65,17 @@ def main():
 
     if not api.ensure_server():
         die("Rendafar could not start its server.",
-            "Run START RENDAFAR.bat in a terminal to see why.")
+            "Run \"RUN SERVER LOOP.bat\" in a terminal to see why.")
 
     win = MainWindow()
     win.show()
+
+    blend = dropped_blend(sys.argv[1:])
+    if blend:
+        # After show(), so the dialog has a window to sit on.
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(250, lambda: win.do_new(blend))
+
     sys.exit(app.exec())
 
 

@@ -62,7 +62,7 @@ PORT = 8765
 # would leave it running for ever. Instead it shuts down once no browser has
 # polled for this many seconds AND nothing is rendering. A running render, or
 # any window still watching (including the phone), keeps it alive.
-# Only applies when started by app_launcher. 0 disables.
+# Only applies when started by the desktop app. 0 disables.
 IDLE_QUIT_S = 90
 
 # Bind address — localhost only.

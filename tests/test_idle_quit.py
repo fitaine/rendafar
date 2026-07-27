@@ -106,10 +106,12 @@ src = open(os.path.join(config.APP_DIR, "server.py"), encoding="utf-8").read()
 check("watchdog only starts in app mode",
       'RENDAFAR_APP_MODE' in src and 'idle_watchdog' in src,
       "a console launch, and the power-cut auto-resume, stay up")
-launcher = open(os.path.join(config.APP_DIR, "app_launcher.pyw"),
+launcher = open(os.path.join(config.APP_DIR, "desktop", "api.py"),
                 encoding="utf-8").read()
-check("the desktop launcher sets app mode",
-      'RENDAFAR_APP_MODE"] = "1"' in launcher)
+check("the desktop app sets app mode",
+      'RENDAFAR_APP_MODE"] = "1"' in launcher,
+      "a safety net: closing the window shuts the server down explicitly, but "
+      "a crashed app would otherwise leave it running for ever")
 loop = open(os.path.join(config.APP_DIR, "RUN SERVER LOOP.bat"),
             encoding="utf-8", errors="replace").read()
 check("the auto-resume launcher does NOT set app mode",
