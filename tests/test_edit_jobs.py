@@ -116,10 +116,29 @@ check("camera reached the job config",
 code, d = post("/api/edit", {"job_id": cj["id"], "config": {"FRAME_START": 5,
                                                             "FRAME_END": 40}})
 check("classic: frame range is editable", code == 200, str(d)[:100])
-for key in ("SAMPLES", "RESOLUTION_X", "FILE_FORMAT"):
+for key in ("SAMPLES", "RESOLUTION_X"):
     code, d = post("/api/edit", {"job_id": cj["id"], "config": {key: 1}})
     check(f"classic: {key} is refused", code == 400,
           "the .blend is in charge of it")
+
+code, d = post("/api/edit", {"job_id": cj["id"], "config": {"FILE_FORMAT": "OPEN_EXR"}})
+check("classic: format is editable (since the 2026-07-27 script)",
+      code == 200, str(d)[:100])
+
+print("\n=== 3b. an older pinned script refuses what it does not know ===")
+old = os.path.join(config.FROZEN_DIR, "render_classic_2026-07-26.py")
+if os.path.isfile(old):
+    oj = qm.create_job(blend, name="old script", job_type="classic",
+                       cfg={"MODE": "animation"}, script=old)
+    code, d = post("/api/edit", {"job_id": oj["id"],
+                                 "config": {"FILE_FORMAT": "PNG"}})
+    check("a job pinned to the older snapshot refuses FILE_FORMAT",
+          code == 400, str(d.get("error"))[:130])
+    code, d = post("/api/edit", {"job_id": oj["id"], "config": {"CAMERA": "Cam"}})
+    check("but still accepts what that script does know", code == 200,
+          str(d)[:80])
+else:
+    check("older snapshot present to test against", False, old)
 
 print("\n=== 4. refused once the job is no longer just queued ===")
 qm.set_state(cj["id"], qm.RUNNING)

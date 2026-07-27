@@ -232,13 +232,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def showEvent(self, e):
         super().showEvent(e)
-        # Once, and only when there is no arrangement of her own to respect.
+        # Only the dock sizing is conditional. Maximising is not: it happens on
+        # every launch, from the entry point, because tying it to "no saved
+        # layout" meant it never happened again after the first run.
         if not getattr(self, "_sized", False):
             self._sized = True
             if not self._had_saved_layout:
-                # Maximised, not fullscreen: the taskbar and title bar stay,
-                # and every panel gets room without anything being hidden.
-                self.showMaximized()
                 QtCore.QTimer.singleShot(0, self._size_docks)
 
     def _save_layout(self):

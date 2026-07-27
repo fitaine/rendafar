@@ -68,7 +68,10 @@ def main():
             "Run \"RUN SERVER LOOP.bat\" in a terminal to see why.")
 
     win = MainWindow()
-    win.show()
+    # Maximised every launch, as asked — not fullscreen, so the title bar and
+    # taskbar stay and every panel is reachable. The dock arrangement is still
+    # restored from last time; only the window size is decided here.
+    win.showMaximized()
 
     blend = dropped_blend(sys.argv[1:])
     if blend:

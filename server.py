@@ -416,8 +416,11 @@ class Handler(BaseHTTPRequestHandler):
         # refuses once anything has been rendered; moving the target folder
         # mid-render would abandon the tiles already written.
         "tiled":   {"FILE_FORMAT", "RENDER_NAME", "OUTPUT_DIR"},
+        # FILE_FORMAT needs a script that has the override — snapshots from
+        # before 2026-07-27 do not, so it is checked per job below rather than
+        # assumed from the type.
         "classic": {"CAMERA", "FRAME", "FRAME_START", "FRAME_END", "FRAME_STEP",
-                    "OUTPUT_DIR", "DEVICE"},
+                    "OUTPUT_DIR", "DEVICE", "FILE_FORMAT"},
     }
 
     def _edit_job(self, body):
@@ -442,7 +445,14 @@ class Handler(BaseHTTPRequestHandler):
                 f"settings now would mix two renders in one folder. Create a "
                 f"new job instead.")
 
-        allowed = self.EDITABLE.get(job.get("type"), set())
+        allowed = set(self.EDITABLE.get(job.get("type"), set()))
+
+        # Narrow it to what this job's pinned script actually understands. A
+        # job created before a setting existed keeps the older snapshot, and
+        # would otherwise be handed a key its script rejects at launch.
+        supported = paths.script_overridable(job.get("script", ""))
+        if supported is not None:
+            allowed &= supported
         changes = dict(body.get("config") or {})
 
         # "_OUTPUT" is the folder as the UI shows it. Translating it here means

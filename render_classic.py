@@ -50,6 +50,12 @@ OUTPUT_DIR    = ""           # "" = use the .blend's own output path
 CAMERA        = ""           # "" = use the scene's active camera
 SKIP_EXISTING = True         # resume: don't re-render frames already on disk
 
+# File format. "" = use the .blend's own setting, which is still the default.
+# One of PNG, JPEG, WEBP, OPEN_EXR, TIFF, BMP, TARGA, FFMPEG, ...
+# Changing it changes the file extension, so it also changes which frames count
+# as already rendered — only ever set this before a job has started.
+FILE_FORMAT   = ""
+
 # Compute device.  "" = leave the .blend's own setting alone (the default:
 # these scenes are already configured for GPU).  "GPU" or "CPU" to override.
 DEVICE         = ""
@@ -71,6 +77,7 @@ COMPUTE_DEVICE = "OPTIX"     # only consulted when DEVICE == "GPU"
 _JOB_OVERRIDABLE = {
     "MODE", "FRAME", "FRAME_START", "FRAME_END", "FRAME_STEP",
     "OUTPUT_DIR", "CAMERA", "SKIP_EXISTING", "DEVICE", "COMPUTE_DEVICE",
+    "FILE_FORMAT",
 }
 
 JOB      = {}
@@ -201,6 +208,17 @@ def render_classic():
 
     if OUTPUT_DIR:
         r.filepath = OUTPUT_DIR
+
+    # Before anything reads frame_path(): the format decides the extension, and
+    # therefore which files count as already rendered.
+    if FILE_FORMAT:
+        try:
+            r.image_settings.file_format = FILE_FORMAT
+            print(f"  format       : {FILE_FORMAT}  (overridden by job)",
+                  flush=True)
+        except TypeError:
+            raise RuntimeError(
+                f"{FILE_FORMAT!r} is not a file format Blender knows")
 
     setup_device(scene)
 

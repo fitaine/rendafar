@@ -67,17 +67,24 @@ class KindStripe(QtWidgets.QStyledItemDelegate):
 
 
 class FolderEdit(QtWidgets.QWidget):
-    """A path field with a folder picker beside it."""
+    """
+    A path field with a folder picker beside it.
+
+    Sized explicitly: as a bare container it collapsed to the row height and
+    the field inside came out as a sliver too thin to read, let alone type in.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAutoFillBackground(True)
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self.line = QtWidgets.QLineEdit(self)
-        self.line.setFrame(False)
+        self.line.setMinimumHeight(26)
         btn = QtWidgets.QToolButton(self)
         btn.setText("…")
+        btn.setMinimumHeight(26)
         btn.setToolTip("Choose a folder")
         btn.clicked.connect(self._pick)
         lay.addWidget(self.line, 1)
@@ -112,6 +119,23 @@ class CellEditor(QtWidgets.QStyledItemDelegate):
 
     edited = QtCore.Signal(str, str, object, str)   # job_id, key, value, type
 
+    # A cell editor gets the row's height, and the stylesheet's padding on
+    # QComboBox/QLineEdit then leaves almost nothing for the text — the camera
+    # dropdown came out as a flat sliver. Rows and editors are sized together
+    # here so an editor is always usable.
+    ROW_HEIGHT = 34
+
+    def sizeHint(self, option, index):
+        s = super().sizeHint(option, index)
+        s.setHeight(max(s.height(), self.ROW_HEIGHT))
+        return s
+
+    def updateEditorGeometry(self, editor, option, index):
+        r = QtCore.QRect(option.rect)
+        if r.height() < self.ROW_HEIGHT:
+            r.setHeight(self.ROW_HEIGHT)
+        editor.setGeometry(r)
+
     def createEditor(self, parent, option, index):
         spec = index.data(ROLE_EDIT)
         if not spec:
@@ -121,10 +145,15 @@ class CellEditor(QtWidgets.QStyledItemDelegate):
             box = QtWidgets.QComboBox(parent)
             box.addItems(choices)
             box.setEditable(False)
+            box.setMinimumHeight(self.ROW_HEIGHT - 4)
+            # Open straight away: the cell is being edited precisely because a
+            # different value is wanted, so the list should already be there.
+            QtCore.QTimer.singleShot(0, box.showPopup)
             return box
-        if kind == "folder":
-            return FolderEdit(parent)
-        return QtWidgets.QLineEdit(parent)
+        editor = FolderEdit(parent) if kind == "folder" \
+            else QtWidgets.QLineEdit(parent)
+        editor.setMinimumHeight(self.ROW_HEIGHT - 4)
+        return editor
 
     def setEditorData(self, editor, index):
         value = index.data(QtCore.Qt.DisplayRole) or ""
@@ -175,13 +204,12 @@ class JobsTable(QtWidgets.QTableWidget):
         for key in ("camera", "frames", "format", "output", "name"):
             self.setItemDelegateForColumn(COL[key], self._editor)
 
+        self.verticalHeader().setDefaultSectionSize(CellEditor.ROW_HEIGHT)
         self.cellClicked.connect(self._explain_locked)
         self._ids = []
         self._pending = None                # refresh held back during an edit
         self._blend = {}                    # blend path -> (mtime, info)
 
-        # Editors are cramped at default row height; give them room to type in.
-        self.verticalHeader().setDefaultSectionSize(30)
 
     # ── data in ──────────────────────────────────────────────────────────
 
@@ -312,11 +340,18 @@ class JobsTable(QtWidgets.QTableWidget):
                    cfg_key="_FRAMES", kind="text",
                    locked_why=why or "A tiled render is one frame")
 
+        # Editable for both kinds now. A classic render still takes the
+        # .blend's format by default; setting one here overrides it, which the
+        # classic script has accepted since the 2026-07-27 snapshot. Older jobs
+        # keep their pinned script and the server refuses, with a reason.
         self._cell(row, "format", fmt, mono=True,
-                   editable=can_edit and not classic, job=job,
+                   editable=can_edit, job=job,
                    cfg_key="FILE_FORMAT", kind="choice",
-                   choices=["WEBP", "JPEG", "PNG"],
-                   locked_why=why or ("Comes from the .blend" if classic else ""))
+                   choices=(["WEBP", "JPEG", "PNG"] if not classic else
+                            ["PNG", "JPEG", "WEBP", "OPEN_EXR", "TIFF"]),
+                   locked_why=why,
+                   tip="Double-click to change — blank means the .blend's own"
+                       if classic else "Double-click to change")
 
         # The cell shows the folder the render actually writes to, and editing
         # it sets that same folder. For a tiled job that means splitting the

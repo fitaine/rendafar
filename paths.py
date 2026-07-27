@@ -33,6 +33,50 @@ def output_dir_for(blend_path, output_dir="//tiles/", render_name=""):
     return os.path.join(blender_abspath(output_dir, blend_path), name)
 
 
+_overridable_cache = {}
+
+
+def script_overridable(script_path):
+    """
+    The config keys a render script will accept, read from the script itself.
+
+    Jobs pin a dated snapshot, so an older job's script may not know a setting
+    that exists today — FILE_FORMAT arrived in the classic script on
+    2026-07-27. Asking the script rather than assuming from the job type means
+    the refusal comes at edit time, with a reason, instead of the render
+    failing hours later.
+
+    Read with ast: the scripts import bpy at module level and cannot be
+    imported outside Blender.
+    """
+    import ast
+
+    key = os.path.abspath(script_path)
+    try:
+        mtime = os.path.getmtime(key)
+    except OSError:
+        return None                       # unknown: let the caller not block
+    hit = _overridable_cache.get(key)
+    if hit and hit[0] == mtime:
+        return hit[1]
+
+    try:
+        tree = ast.parse(open(key, encoding="utf-8").read())
+    except (OSError, SyntaxError):
+        return None
+    found = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "_JOB_OVERRIDABLE"
+                for t in node.targets):
+            try:
+                found = set(ast.literal_eval(node.value))
+            except (ValueError, TypeError):
+                found = None
+    _overridable_cache[key] = (mtime, found)
+    return found
+
+
 def split_output(value, job_type):
     """
     Turn a folder into the settings the render script expects.
