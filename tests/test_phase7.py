@@ -142,6 +142,42 @@ code, d = post("/api/new", {"blend": os.path.join(scenes, "notes.txt"),
                             "kind": "tiled"})
 check("non-blend refused", code == 400, str(d))
 
+print("\n=== 3b. adding renders is local-only ===")
+
+
+def remote(method, path, payload=None):
+    """Same request, but arriving with the tunnel's hostname."""
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{config.PORT}{path}",
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Content-Type": "application/json"},
+        method=method)
+    req.add_header("Host", "render.example.com")
+    try:
+        return 200, json.loads(urllib.request.urlopen(req, timeout=10).read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+real_public = config.PUBLIC_HOSTNAME
+config.PUBLIC_HOSTNAME = ""          # keep the Access guard out of this test
+
+code, d = remote("GET", "/api/browse")
+check("remote CANNOT browse the filesystem", code == 403, f"HTTP {code} {d}")
+code, d = remote("POST", "/api/new", {"blend": blend, "kind": "tiled"})
+check("remote CANNOT create a render", code == 403, f"HTTP {code} {d}")
+check("and says why", "render PC" in (d.get("error") or ""), str(d.get("error")))
+
+code, d = remote("GET", "/api/status")
+check("remote CAN still watch", code == 200 and d.get("local") is False)
+code, d = remote("POST", "/api/start", {})
+check("remote CAN still steer (start/stop/resume)", code == 200,
+      f"HTTP {code} — watching and steering is the whole point of remote")
+config.PUBLIC_HOSTNAME = real_public
+
+html = get("/")[1].decode("utf-8", "replace")
+check("UI hides the New render button remotely", 'id="newwrap" hidden' in html)
+
 print("\n=== 4. warns when a job would resume into an existing folder ===")
 out = os.path.join(scenes, "tiles", "uitest")
 os.makedirs(out, exist_ok=True)

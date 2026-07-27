@@ -80,9 +80,14 @@ def start_server():
     pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     if not os.path.isfile(pyw):
         pyw = sys.executable
+    env = os.environ.copy()
+    # Tells the server it is an app, not a service: it should close itself once
+    # the last window goes away and nothing is rendering, so the window's X
+    # behaves the way an X should.
+    env["RENDAFAR_APP_MODE"] = "1"
     subprocess.Popen(
         [pyw, os.path.join(config.APP_DIR, "server.py")],
-        cwd=config.APP_DIR,
+        cwd=config.APP_DIR, env=env,
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
         close_fds=True,
     )

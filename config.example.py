@@ -58,6 +58,13 @@ PREVIEW_MAX_PX = 1000       # long edge of the generated thumbnail
 
 PORT = 8765
 
+# When launched as a desktop app the server runs hidden, so closing the window
+# would leave it running for ever. Instead it shuts down once no browser has
+# polled for this many seconds AND nothing is rendering. A running render, or
+# any window still watching (including the phone), keeps it alive.
+# Only applies when started by app_launcher. 0 disables.
+IDLE_QUIT_S = 90
+
 # Bind address — localhost only.
 #
 # Remote access is expected to go through a tunnel (Cloudflare Tunnel, or a

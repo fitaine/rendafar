@@ -42,6 +42,39 @@ controller = Controller(notify=notify.job_event)
 _thumb_cache = {"key": None, "bytes": None}
 _thumb_lock  = threading.Lock()
 
+# When the last browser was seen. Any /api/status poll counts as a window
+# watching, from this machine or the phone.
+_last_seen = time.time()
+
+
+def idle_watchdog(srv):
+    """
+    Shut down when nobody is watching and nothing is rendering.
+
+    Launched from the desktop icon the server has no console and no visible
+    process, so closing the window would otherwise leave it running for ever.
+    This makes the window's X mean what it appears to mean.
+
+    A render in progress always keeps the server alive: it must stay
+    supervised, and reachable from the phone. That is the whole point of the
+    app, so it outranks tidiness.
+    """
+    # Check often enough to react promptly, but never busier than every 5s.
+    interval = max(1.0, min(5.0, config.IDLE_QUIT_S / 3.0))
+    while True:
+        time.sleep(interval)
+        if config.IDLE_QUIT_S <= 0:
+            return
+        if controller.runner.is_busy():
+            continue
+        if time.time() - _last_seen < config.IDLE_QUIT_S:
+            continue
+        print(f"\n  no window for {config.IDLE_QUIT_S}s and nothing rendering "
+              f"— Rendafar is closing.")
+        threading.Thread(target=lambda: (srv.shutdown(), srv.server_close()),
+                         daemon=True).start()
+        return
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -214,6 +247,8 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/", "/index.html"):
                 return self._static("index.html")
             if path == "/api/status":
+                global _last_seen
+                _last_seen = time.time()      # a window is watching
                 st = build_status()
                 # Quitting from the phone would be a one-way door: the server
                 # would stop, and nothing can start it remotely (boot_check
@@ -225,6 +260,13 @@ class Handler(BaseHTTPRequestHandler):
                 n = int(parse_qs(u.query).get("n", ["400"])[0])
                 return self._json({"lines": controller.runner.log_tail(n)})
             if path == "/api/browse":
+                # Local only. Walking the whole filesystem is a reasonable
+                # convenience at the machine, and needless exposure from the
+                # phone — where picking a file was never the point.
+                if not self._is_local():
+                    return self._json(
+                        {"error": "File browsing is only available on the "
+                                  "render PC."}, 403)
                 p = parse_qs(u.query).get("path", [""])[0]
                 return self._json(browse.listing(p))
             if path == "/api/tile":
@@ -268,6 +310,19 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/quit":
                 return self._quit(force=bool(body.get("force")))
             if path == "/api/new":
+                # Local only, deliberately. Remote is for watching and steering
+                # renders that already exist — never for creating them.
+                #
+                # This is defence in depth. Cloudflare Access already means
+                # only Tiphaine gets here, but creating a job names an
+                # arbitrary file for Blender to open, and a .blend can carry
+                # auto-executing Python. Nothing is gained by offering that
+                # over the internet when adding renders from afar was never
+                # wanted.
+                if not self._is_local():
+                    return self._json(
+                        {"error": "Renders can only be added on the render PC."},
+                        403)
                 return self._new_job(body)
             return self._send(404, "not found")
         except (KeyError, ValueError, RuntimeError, FileNotFoundError) as e:
@@ -417,6 +472,13 @@ def main():
     srv = ThreadingHTTPServer((config.HOST, PORT), Handler)
     print(f"\n  Rendafar  →  http://127.0.0.1:{PORT}")
     print(f"  remote          →  via Cloudflare Tunnel (see PLAN.md)")
+
+    # Only in app mode: started from a console (or by the power-cut auto-resume)
+    # it stays up until you close the window yourself.
+    if os.environ.get("RENDAFAR_APP_MODE") == "1" and config.IDLE_QUIT_S > 0:
+        print(f"  app mode        :  closes {config.IDLE_QUIT_S}s after the last "
+              f"window, unless rendering")
+        threading.Thread(target=idle_watchdog, args=(srv,), daemon=True).start()
     print(f"  machine         :  {socket.gethostname()}")
     print(f"  queue           :  {config.QUEUE_DIR}")
     print("  Ctrl+C to stop the server (renders keep running)\n")

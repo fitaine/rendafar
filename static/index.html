@@ -330,7 +330,7 @@ input::placeholder{color:#4B5A69}
 
       <div class="card">
         <h2 class="card-title">Queue <span class="aside" id="queueaside"></span></h2>
-        <div class="actions" style="margin:0 0 12px">
+        <div class="actions" style="margin:0 0 12px" id="newwrap" hidden>
           <button class="primary" onclick="openNew()">+ New render</button>
         </div>
         <div id="queue"></div>
@@ -351,9 +351,9 @@ input::placeholder{color:#4B5A69}
         <div class="row">
           <input type="text" id="nf-blend" placeholder="D:\scenes\valley.blend"
                  spellcheck="false">
-          <button class="mini" onclick="openBrowse()">Browse…</button>
+          <button class="mini" id="nf-browse" onclick="openBrowse()">Browse…</button>
         </div>
-        <small>Or drag a .blend onto the Rendafar desktop icon.</small>
+        <small id="nf-blendhint">Or drag a .blend onto the Rendafar desktop icon.</small>
       </label>
 
       <label class="field">
@@ -429,16 +429,18 @@ input::placeholder{color:#4B5A69}
   </div>
 
   <div class="quitwrap" id="quitwrap" hidden>
-    <span class="quitnote" id="quitnote">
-      Closing this window leaves Rendafar running in the background.
-    </span>
-    <button class="quit" onclick="quitApp()">Quit Rendafar</button>
+    <span class="quitnote" id="quitnote"></span>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 let LAST = null, tileStamp = 0, logPinned = true;
+
+/* Whether this browser is on the render machine. Adding renders and browsing
+   the filesystem are local-only; the server enforces it, this just keeps the
+   UI honest about what is on offer. */
+let IS_LOCAL = false;
 
 const hms = s => {
   if (s == null || isNaN(s)) return "—";
@@ -625,9 +627,14 @@ async function tick(){
   $("live").innerHTML  = liveBlock(s.live);
   $("gpu").innerHTML   = gpuBlock(s.gpu);
   $("gpuname").textContent = s.gpu && s.gpu.name ? s.gpu.name : "";
-  // Quit is offered only at the machine: shutting the server down from the
-  // phone could not be undone remotely.
+  IS_LOCAL = !!s.local;
+  $("newwrap").hidden = !IS_LOCAL;      // renders are added at the machine only
+  // Shown only at the machine: it describes what closing the window does here.
   $("quitwrap").hidden = !s.local;
+  $("quitnote").textContent = s.busy
+    ? "A render is running — closing this window keeps Rendafar going in the "
+      + "background so the render stays supervised and reachable from your phone."
+    : "Closing this window closes Rendafar.";
   $("queue").innerHTML = queueList(s.queue || [], s.job_id);
   $("queueaside").textContent = (s.queue || []).length + " jobs";
   actions(s);
@@ -713,6 +720,12 @@ function removeJob(id){
 function openNew(blendPath){
   if (blendPath) $("nf-blend").value = blendPath;
   $("nf-msg").innerHTML = "";
+  // Browsing the filesystem is a convenience at the machine, not something to
+  // expose from the phone. The server refuses it remotely; hide it too.
+  $("nf-browse").hidden = !IS_LOCAL;
+  $("nf-blendhint").textContent = IS_LOCAL
+    ? "Or drag a .blend onto the Rendafar desktop icon."
+    : "Type the full path. Browsing is only available on the render PC.";
   $("newmodal").hidden = false;
   (blendPath ? $("nf-name") : $("nf-blend")).focus();
 }
@@ -814,9 +827,11 @@ function pickBlend(path){
   if (p) { history.replaceState({}, "", "/"); setTimeout(() => openNew(p), 300); }
 })();
 
-/* Quitting is refused while a render runs: without a supervisor, Blender would
-   keep going with nothing to finalise the job or start the next one. Stopping
-   the render first is offered explicitly rather than done silently. */
+/* No Quit button: the window's X is the way out, and the server closes itself
+   once no window has polled for a while and nothing is rendering. This is kept
+   because /api/quit still exists for scripted shutdown, and it still refuses
+   while a render is running — killing the supervisor would leave Blender with
+   nothing to finalise the job or start the next one. */
 async function quitApp(force){
   const r = await fetch("/api/quit", {
     method:"POST", headers:{"Content-Type":"application/json"},
