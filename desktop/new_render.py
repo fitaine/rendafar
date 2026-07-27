@@ -29,6 +29,7 @@ class NewRenderDialog(QtWidgets.QDialog):
         self.setWindowTitle("New render")
         self.setMinimumWidth(560)
         self.setAcceptDrops(True)
+        self._jobs = []
         self._build()
         if blend:
             self.blend_edit.setText(blend)
@@ -78,8 +79,7 @@ class NewRenderDialog(QtWidgets.QDialog):
             self.kind_box.addItem(label, key)
             self.kind_box.setItemData(self.kind_box.count() - 1, tip,
                                       QtCore.Qt.ToolTipRole)
-        self.kind_box.currentIndexChanged.connect(
-            lambda i: self.pages.setCurrentIndex(i))
+        self.kind_box.currentIndexChanged.connect(self._kind_changed)
         lay.addWidget(self.kind_box)
 
         self.pages = QtWidgets.QStackedWidget()
@@ -163,11 +163,78 @@ class NewRenderDialog(QtWidgets.QDialog):
             "Preview first (5×5 grid, low samples)")
 
         f.addRow("Long edge", self.long_edge)
-        f.addRow("Tile size", self.tile_long)
+        # "Tile long edge", not "Tile size": the script derives the tile's
+        # short edge from the image aspect so the grid comes out square
+        # (N_cols == N_rows), which its own docstring says is required for the
+        # single-focal-length zoom to work on both axes. Tiles are only square
+        # when the image is.
+        f.addRow("Tile long edge", self.tile_long)
         f.addRow("Format", self.fmt)
         f.addRow("Render name", self.render_name)
         f.addRow("", self.preview_first)
+
+        self.grid_note = QtWidgets.QLabel("")
+        self.grid_note.setWordWrap(True)
+        self.grid_note.setFont(theme.font(theme.MONO, 9))
+        self.grid_note.setStyleSheet(
+            f"color:{theme.GLACIER}; background:{theme.PANEL_2};"
+            f"border:1px solid {theme.LINE}; border-radius:7px; padding:9px;")
+        f.addRow("", self.grid_note)
+
+        # Recomputed as the numbers change, debounced so typing 120000 does not
+        # fire five requests.
+        self._grid_timer = QtCore.QTimer(self)
+        self._grid_timer.setSingleShot(True)
+        self._grid_timer.setInterval(450)
+        self._grid_timer.timeout.connect(self._refresh_grid)
+        for spin in (self.long_edge, self.tile_long):
+            spin.valueChanged.connect(lambda _: self._grid_timer.start())
         return w
+
+    # ── what the render will actually be ─────────────────────────────────
+
+    def _refresh_grid(self):
+        """
+        Show the real geometry before committing to a render measured in days.
+
+        Everything here comes from the pinned script's own compute_grid(), via
+        the server — never from a copy of that maths.
+        """
+        blend = self.blend_edit.text().strip().strip('"')
+        if self.kind_box.currentData() != "tiled" or not os.path.isfile(blend):
+            self.grid_note.setText("")
+            return
+        self.grid_note.setText("working it out…")
+
+        class Job(QtCore.QThread):
+            done = QtCore.Signal(dict)
+
+            def run(self):
+                try:
+                    self.done.emit(api.grid_preview(
+                        blend, self.long_edge, self.tile_long))
+                except Exception as e:
+                    self.done.emit({"error": str(e)})
+
+        job = Job(self)
+        job.long_edge = self.long_edge.value()
+        job.tile_long = self.tile_long.value()
+        job.done.connect(self._grid_ready)
+        job.finished.connect(job.deleteLater)
+        self._jobs.append(job)
+        job.start()
+
+    @QtCore.Slot(dict)
+    def _grid_ready(self, g):
+        if g.get("error"):
+            self.grid_note.setText(g["error"])
+            return
+        shape = "square tiles" if g["square_tiles"] else \
+                f"tiles are {g['tile_w']} × {g['tile_h']} px, not square"
+        self.grid_note.setText(
+            f"{g['total_w']:,} × {g['total_h']:,} px   ({g['megapixels']:,} MP)\n"
+            f"{g['cols']} × {g['rows']} grid  =  {g['tiles']:,} tiles\n"
+            f"{shape}".replace(",", " "))
 
     def _page_animation(self):
         w, f = self._form()
@@ -185,6 +252,10 @@ class NewRenderDialog(QtWidgets.QDialog):
         return w
 
     # ── picking a file ───────────────────────────────────────────────────
+
+    def _kind_changed(self, index):
+        self.pages.setCurrentIndex(index)
+        self._grid_timer.start()
 
     def browse(self):
         """A real Windows file dialog — Qt's is the native one."""
@@ -229,6 +300,8 @@ class NewRenderDialog(QtWidgets.QDialog):
             self.blend_edit.setToolTip("No .blend file at that path")
         else:
             self.blend_edit.setToolTip("")
+        if ok:
+            self._grid_timer.start()      # a new file means a new grid
 
     def payload(self):
         kind = self.kind_box.currentData()

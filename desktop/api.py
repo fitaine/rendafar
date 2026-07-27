@@ -144,6 +144,16 @@ def blend_info(path, refresh=False):
     return _call(f"/api/blendinfo?{q}", timeout=200)
 
 
+def grid_preview(blend, long_edge, tile_long, script=""):
+    """
+    What a tiled render would actually produce. Computed by the pinned render
+    script's own compute_grid(), so the preview cannot drift from the render.
+    """
+    q = urllib.parse.urlencode({"blend": blend, "long_edge": long_edge,
+                                "tile_long": tile_long, "script": script})
+    return _call(f"/api/gridpreview?{q}", timeout=200)
+
+
 def tile_bytes():
     """Raw JPEG of the newest rendered image, or None."""
     try:

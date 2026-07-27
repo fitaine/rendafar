@@ -19,6 +19,10 @@ import subprocess
 import config
 
 CACHE_DIR = os.path.join(config.APP_DIR, "cache")
+
+# Bump when the probe learns a new field, so old entries are re-read rather
+# than used with something missing.
+CACHE_VERSION = 2
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # Printed either side of the JSON so it can be found in Blender's very chatty
@@ -30,6 +34,7 @@ import bpy, json, os
 s = bpy.context.scene
 r = s.render
 info = {
+    "_v": 2,
     "scene": s.name,
     "camera": s.camera.name if s.camera else None,
     "cameras": [o.name for o in bpy.data.objects if o.type == 'CAMERA'],
@@ -37,6 +42,8 @@ info = {
     "resolution_x": r.resolution_x,
     "resolution_y": r.resolution_y,
     "resolution_percentage": r.resolution_percentage,
+    "pixel_aspect_x": r.pixel_aspect_x,
+    "pixel_aspect_y": r.pixel_aspect_y,
     "final_x": round(r.resolution_x * r.resolution_percentage / 100),
     "final_y": round(r.resolution_y * r.resolution_percentage / 100),
     "fps": r.fps,
@@ -91,7 +98,12 @@ def read(blend, refresh=False):
     if not refresh and os.path.isfile(cache):
         try:
             with open(cache, encoding="utf-8") as f:
-                return json.load(f)
+                cached = json.load(f)
+            # Version check, not just presence: an entry written before a new
+            # field existed would otherwise be used with that field missing,
+            # and a silently-defaulted pixel aspect would give a wrong grid.
+            if cached.get("_v") == CACHE_VERSION:
+                return cached
         except (OSError, ValueError):
             pass                          # unreadable cache: probe again
 

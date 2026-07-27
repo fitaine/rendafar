@@ -278,6 +278,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(blend_info.read(
                     q.get("path", [""])[0],
                     refresh=q.get("refresh", ["0"])[0] == "1"))
+            if path == "/api/gridpreview":
+                if not self._is_local():
+                    return self._json({"error": "Local only."}, 403)
+                import blend_info
+                import grid_preview
+                q = parse_qs(u.query)
+                blend = q.get("blend", [""])[0]
+                script = q.get("script", [""])[0] or config.DEFAULT_TILED_SCRIPT
+                return self._json(grid_preview.preview(
+                    script, blend_info.read(blend),
+                    int(q.get("long_edge", ["120000"])[0]),
+                    int(q.get("tile_long", ["4096"])[0])))
             if path == "/api/tile":
                 return self._tile()
             if path == "/sw.js":
