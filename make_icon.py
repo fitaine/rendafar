@@ -69,19 +69,39 @@ def draw(size):
     return img
 
 
+STATIC = os.path.dirname(OUT)
+LOGO = os.path.join(STATIC, "icon-256.png")
+
+
+def source_images(sizes):
+    """
+    The icon at each size.
+
+    Tiphaine's own logo when it is there, scaled down; the drawn tile grid
+    otherwise. Her file is only ever read, never written over.
+    """
+    if os.path.isfile(LOGO):
+        with Image.open(LOGO) as im:
+            logo = im.convert("RGBA")
+        print(f"using {LOGO}")
+        return [logo.resize((s, s), Image.LANCZOS) for s in sizes], logo
+    print("no logo found — drawing the tile-grid icon")
+    return [draw(s) for s in sizes], draw(256)
+
+
 def main():
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    sizes  = sorted(PLANS)
-    images = [draw(s) for s in sizes]
+    os.makedirs(STATIC, exist_ok=True)
+    sizes = sorted(PLANS)
+    images, big = source_images(sizes)
+
     images[-1].save(OUT, format="ICO",
                     sizes=[(s, s) for s in sizes],
                     append_images=images[:-1])
     print(f"wrote {OUT}")
 
-    # PNGs for the Android PWA, from the largest drawing.
-    big = draw(256).resize((512, 512), Image.NEAREST)
+    # PNGs for the Android PWA, so the phone shows the same mark.
     for px in (192, 512):
-        p = os.path.join(os.path.dirname(OUT), f"icon-{px}.png")
+        p = os.path.join(STATIC, f"icon-{px}.png")
         big.resize((px, px), Image.LANCZOS).save(p)
         print(f"wrote {p}")
 
