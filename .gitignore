@@ -42,3 +42,8 @@ desktop.ini
 
 # Absolute python path for the scheduled task (machine-specific)
 local_python.bat
+
+# Stray debug output from launching the Qt app
+qt_out.txt
+qt_err.txt
+
