@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0B0F14">
 <!-- crossorigin="use-credentials" is required, not optional, when the app sits
@@ -36,7 +36,11 @@
   --mono:"Cascadia Mono",Consolas,"SF Mono",monospace;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
+/* Belt and braces against the phone: the viewport meta stops pinch-zoom on
+   its own in most browsers, but touch-action stops it being reintroduced by
+   gesture handling inside the page, and overflow-x is a hard backstop against
+   anything ever scrolling sideways. */
+html,body{margin:0;padding:0; overflow-x:hidden; touch-action:pan-y}
 body{
   background:var(--bg); color:var(--ink); font-family:var(--body);
   font-size:15px; line-height:1.5;
@@ -71,11 +75,30 @@ body{
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
 .cols{display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px}
-@media(min-width:900px){ .cols{grid-template-columns:1.15fr .85fr; align-items:start} }
+
+/* Mobile stacking order — Queue first, everything else in its previous
+   relative order. Independent of the desktop column split below: cards are
+   direct grid children now, so reordering one breakpoint never touches
+   the other. */
+#queuecard{order:1} #gridcard{order:2} #progresscard{order:3}
+#previewcard{order:4} #gpucard{order:5} #logcard{order:6}
+
+@media(min-width:900px){
+  .cols{grid-template-columns:1.15fr .85fr; align-items:start}
+  /* Desktop keeps the original layout: tile map / progress / log on the
+     left, preview / GPU / queue on the right. */
+  #gridcard{grid-column:1; order:1}
+  #progresscard{grid-column:1; order:2}
+  #logcard{grid-column:1; order:3}
+  #previewcard{grid-column:2; order:1}
+  #gpucard{grid-column:2; order:2}
+  #queuecard{grid-column:2; order:3}
+}
 
 .card{background:var(--panel); border:1px solid var(--line); border-radius:10px;
       padding:14px}
-.card + .card{margin-top:14px}
+/* Spacing between cards now comes from the grid's own `gap`, since cards are
+   direct grid children — a leftover margin-top here would double up. */
 .card-title{font-family:var(--display); font-size:11px; letter-spacing:.18em;
             text-transform:uppercase; color:var(--dim); margin:0 0 12px;
             display:flex; justify-content:space-between; align-items:baseline; gap:8px}
@@ -104,7 +127,15 @@ body{
 
 /* ── Tile preview ───────────────────────────────────────────────────────── */
 #tileimg{width:100%; border-radius:6px; display:block; background:var(--panel-2);
-         border:1px solid var(--line-soft)}
+         border:1px solid var(--line-soft); cursor:zoom-in}
+
+/* Fullscreen preview, opened by tapping the thumbnail. */
+.lightbox{position:fixed; inset:0; z-index:80; background:rgba(4,7,10,.94);
+          display:flex; align-items:center; justify-content:center;
+          padding:18px; cursor:zoom-out}
+.lightbox[hidden]{display:none}
+.lightbox img{max-width:100%; max-height:100%; object-fit:contain;
+              border-radius:4px; box-shadow:0 8px 40px rgba(0,0,0,.6)}
 .noimg{color:var(--faint); font-family:var(--mono); font-size:12px; padding:26px 0;
        text-align:center; line-height:1.6}
 .subtle{font-family:var(--mono); font-size:10.5px; color:var(--faint);
@@ -288,54 +319,59 @@ input::placeholder{color:#4B5A69}
 
   <div class="actions" id="actions"></div>
 
+  <!-- Cards are direct children of .cols (not nested in column wrapper divs)
+       so each one can carry its own `order`: mobile stacking and the desktop
+       two-column split are independent, and Queue can be first on a phone
+       without moving anything on desktop. -->
   <div class="cols">
-    <div>
-      <div class="card" id="gridcard">
-        <h2 class="card-title" id="gridtitle">Tile map <span class="aside" id="gridaside"></span></h2>
-        <canvas id="grid"></canvas>
-        <div class="legend">
-          <span><i id="legend-done" style="background:var(--k-tiled)"></i>rendered</span>
-          <span><i style="background:var(--amber)"></i>newest</span>
-          <span><i style="background:var(--rock)"></i>pending</span>
-        </div>
+    <div class="card" id="queuecard">
+      <h2 class="card-title">Queue <span class="aside" id="queueaside"></span></h2>
+      <div class="actions" style="margin:0 0 12px" id="newwrap" hidden>
+        <button class="primary" onclick="openNew()">+ New render</button>
       </div>
+      <div id="queue"></div>
+    </div>
 
-      <div class="card">
-        <h2 class="card-title">Progress</h2>
-        <div class="stats" id="stats"></div>
-        <div id="live"></div>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Blender output <span class="aside" id="logaside">live</span></h2>
-        <div class="logbox" id="log">Waiting for output…</div>
+    <div class="card" id="gridcard">
+      <h2 class="card-title" id="gridtitle">Tile map <span class="aside" id="gridaside"></span></h2>
+      <canvas id="grid"></canvas>
+      <div class="legend">
+        <span><i id="legend-done" style="background:var(--k-tiled)"></i>rendered</span>
+        <span><i style="background:var(--amber)"></i>newest</span>
+        <span><i style="background:var(--rock)"></i>pending</span>
       </div>
     </div>
 
-    <div>
-      <div class="card">
-        <h2 class="card-title" id="tiletitle">Latest image
-          <span class="aside">
-            <label class="toggle"><input type="checkbox" id="previewon" checked> preview</label>
-          </span>
-        </h2>
-        <div id="tileaside" class="subtle"></div>
-        <div id="tilewrap"><div class="noimg">Nothing rendered yet</div></div>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">GPU <span class="aside" id="gpuname"></span></h2>
-        <div id="gpu"><div class="noimg">Reading…</div></div>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Queue <span class="aside" id="queueaside"></span></h2>
-        <div class="actions" style="margin:0 0 12px" id="newwrap" hidden>
-          <button class="primary" onclick="openNew()">+ New render</button>
-        </div>
-        <div id="queue"></div>
-      </div>
+    <div class="card" id="progresscard">
+      <h2 class="card-title">Progress</h2>
+      <div class="stats" id="stats"></div>
+      <div id="live"></div>
     </div>
+
+    <div class="card" id="previewcard">
+      <h2 class="card-title" id="tiletitle">Latest image
+        <span class="aside">
+          <label class="toggle"><input type="checkbox" id="previewon" checked> preview</label>
+        </span>
+      </h2>
+      <div id="tileaside" class="subtle"></div>
+      <div id="tilewrap"><div class="noimg">Nothing rendered yet</div></div>
+    </div>
+
+    <div class="card" id="gpucard">
+      <h2 class="card-title">GPU <span class="aside" id="gpuname"></span></h2>
+      <div id="gpu"><div class="noimg">Reading…</div></div>
+    </div>
+
+    <div class="card" id="logcard">
+      <h2 class="card-title">Blender output <span class="aside" id="logaside">live</span></h2>
+      <div class="logbox" id="log">Waiting for output…</div>
+    </div>
+  </div>
+
+  <!-- Fullscreen preview: tap/click the latest image to see it large. -->
+  <div class="lightbox" id="lightbox" hidden onclick="closeLightbox()">
+    <img id="lightbox-img" alt="Most recent image rendered, full size">
   </div>
 
   <!-- New render -->
@@ -673,7 +709,8 @@ function paintPreview(s){
     tileStamp = s.last_tile.mtime;
     const img = new Image();
     img.id = "tileimg";
-    img.alt = "Most recent image rendered";
+    img.alt = "Most recent image rendered — tap to see it full size";
+    img.onclick = openLightbox;
     img.onload  = () => { $("tilewrap").replaceChildren(img); };
     // 415 = too big to preview cheaply. Say so rather than showing a broken
     // frame, and never retry the same file.
@@ -688,6 +725,20 @@ function paintPreview(s){
     img.src = `/api/tile?t=${tileStamp}`;
   }
 }
+
+/* Fullscreen preview. Reuses the thumbnail already loaded rather than
+   re-fetching — the point is a bigger look at what is already on screen, not
+   a fresher one. Escape and clicking the backdrop both close it. */
+function openLightbox(){
+  const src = document.getElementById("tileimg")?.src;
+  if (!src) return;
+  $("lightbox-img").src = src;
+  $("lightbox").hidden = false;
+}
+function closeLightbox(){ $("lightbox").hidden = true; }
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("lightbox").hidden) closeLightbox();
+});
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "previewon"){

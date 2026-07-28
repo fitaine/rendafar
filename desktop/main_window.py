@@ -191,15 +191,28 @@ class CollapsibleDock(QtWidgets.QDockWidget):
 
     def _on_floated(self, floating):
         """
-        The moment a panel actually becomes a free window, redock it.
+        Redock a panel once it ends up as a free window — but only once the
+        drag that caused it is actually finished.
 
-        Deferred with a timer: calling setFloating() from inside the very
-        signal that announces the float change confuses Qt's drag state, and
-        the panel would visibly jump. One event-loop turn later it is a clean,
-        deliberate action instead.
+        Dragging a dock's title/tab at all is Qt floating it transiently for
+        the duration of the drag, and topLevelChanged(True) fires the moment
+        that starts, with the mouse still down. Snapping back immediately (the
+        first version) fired mid-drag and yanked the panel back into place
+        before the user could drop it anywhere — which is exactly why it
+        "wouldn't separate" from the GPU tab. Waiting for the mouse button to
+        actually be released distinguishes a genuine detach (drop in empty
+        space) from an ordinary reposition.
         """
         if floating:
-            QtCore.QTimer.singleShot(0, lambda: self.setFloating(False))
+            self._await_release()
+
+    def _await_release(self):
+        if not self.isFloating():
+            return                        # Qt already redocked it — done
+        if QtWidgets.QApplication.mouseButtons() == QtCore.Qt.NoButton:
+            self.setFloating(False)       # button is up: a real detach, undo it
+        else:
+            QtCore.QTimer.singleShot(40, self._await_release)
 
 
 class MainWindow(QtWidgets.QMainWindow):

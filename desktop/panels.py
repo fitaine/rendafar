@@ -230,6 +230,53 @@ class TileMap(QtWidgets.QWidget):
                                      cell - gap, cell - gap))
 
 
+class FullscreenPreview(QtWidgets.QDialog):
+    """
+    A full-screen look at the current preview image.
+
+    Opened by clicking the thumbnail in PreviewPanel. Closes on click,
+    Escape, or double-click — whichever the hand reaches for first — same
+    idea as the web version's lightbox, so the desktop app and the phone
+    behave the same way here.
+    """
+
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent, QtCore.Qt.Window)
+        self.setWindowTitle("Preview")
+        self.setStyleSheet(f"background:{theme.BG}")
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        label = QtWidgets.QLabel()
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        lay.addWidget(label)
+
+        screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        self._full = pixmap
+        label.setPixmap(pixmap.scaled(
+            screen.size() * 0.94, QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation))
+        self._label = label
+        self.showFullScreen()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "_label"):
+            self._label.setPixmap(self._full.scaled(
+                self.size(), QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation))
+
+    def mousePressEvent(self, _e):
+        self.close()
+
+    def keyPressEvent(self, e):
+        if e.key() in (QtCore.Qt.Key_Escape, QtCore.Qt.Key_Space):
+            self.close()
+        else:
+            super().keyPressEvent(e)
+
+
 class PreviewPanel(Panel):
     """The most recent image the render produced, scaled to fit."""
 
@@ -256,18 +303,27 @@ class PreviewPanel(Panel):
             f"border:1px solid {theme.LINE_SOFT}; border-radius:6px;")
         self.lay.addWidget(self.image, 1)
         self._pixmap = None
+        self.image.mousePressEvent = self._clicked
+
+    def _clicked(self, _event):
+        if self._pixmap:
+            FullscreenPreview(self._pixmap, self.window()).exec()
 
     def set_image(self, data, caption=""):
         self.caption.setText(caption)
         if not data:
             self._pixmap = None
             self.image.setText("Nothing rendered yet")
+            self.image.setCursor(QtCore.Qt.ArrowCursor)
             return
         pm = QtGui.QPixmap()
         if not pm.loadFromData(data):
             self.image.setText("Preview unavailable")
+            self._pixmap = None
+            self.image.setCursor(QtCore.Qt.ArrowCursor)
             return
         self._pixmap = pm
+        self.image.setCursor(QtCore.Qt.PointingHandCursor)
         self._rescale()
 
     def _rescale(self):
