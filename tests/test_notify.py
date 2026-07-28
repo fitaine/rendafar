@@ -28,6 +28,7 @@ config.ensure_dirs()
 
 import notify                       # noqa: E402
 import notify_watch                 # noqa: E402
+import paths                        # noqa: E402
 import queue_manager as qm          # noqa: E402
 
 results = []
@@ -134,6 +135,82 @@ write_manifest(4, 4, 10)               # already well underway when first notice
 notify_watch._tick()
 check("mid-render on first notice -> no first-tile photo (would be a lie)",
       not any("First tile" in p[1] for p in photos))
+
+print("\n=== 5b. a resumed render still gets a photo, honestly labelled ===")
+# Suppressing "First tile" on a resume is right. Suppressing the confirmation
+# photo along with it was not: it left up to NOTIFY_PERIODIC_S of silence at
+# exactly the moment you want to know the render picked up properly.
+config.NOTIFY_PERIODIC_S = 7200            # far away, so nothing else can fire
+notify_watch._seen.clear()
+photos.clear()
+qm.set_state(j2["id"], qm.RUNNING)
+st = qm.load_state(); st["running"] = j2["id"]; qm.save_state(st)
+
+write_manifest(4, 4, 10)                   # picked up with 10 already on disk
+notify_watch._tick()
+check("on first notice of a resume -> still nothing", photos == [])
+
+write_manifest(4, 4, 11)                   # the first genuinely NEW tile
+notify_watch._tick()
+check("the first new tile after resuming -> one photo", len(photos) == 1,
+      f"got {len(photos)}")
+check("...labelled 'Back rendering', not 'First tile'",
+      photos and "Back rendering" in photos[0][1]
+      and "First tile" not in photos[0][1],
+      photos[0][1] if photos else "")
+check("...and says which tile it is",
+      photos and "first tile since resuming" in photos[0][1],
+      photos[0][1] if photos else "")
+
+write_manifest(4, 4, 12)
+notify_watch._tick()
+check("later tiles -> no second resume photo", len(photos) == 1, f"got {len(photos)}")
+
+print("\n=== 5c. an animation says frame, not tile ===")
+# The user's real job is a 300-frame animation; calling its output "tiles"
+# is wrong in the one message meant to reassure them it is working.
+anim_out = os.path.join(TMP, "anim_out")
+os.makedirs(anim_out, exist_ok=True)
+
+
+def write_frames_manifest(total, done):
+    import json
+    with open(os.path.join(anim_out, "manifest.json"), "w") as f:
+        json.dump({"kind": "frames", "unit": "frames", "is_movie": False,
+                   "frames": [1, total], "total": total, "frames_done": done,
+                   "frame_times": {str(i + 1): 5.0 for i in range(done)},
+                   "grid": "1" * done + "0" * (total - done), "errors": []}, f)
+
+
+ja = qm.create_job(blend, name="Anim", job_type="classic",
+                   cfg={"MODE": "animation", "OUTPUT_DIR": anim_out})
+qm.set_state(ja["id"], qm.RUNNING)
+st = qm.load_state(); st["running"] = ja["id"]; qm.save_state(st)
+_real_cmp = paths.classic_manifest_path
+paths.classic_manifest_path = lambda job: os.path.join(anim_out, "manifest.json")
+
+notify_watch._seen.clear()
+photos.clear()
+write_frames_manifest(300, 0)
+notify_watch._tick()
+write_frames_manifest(300, 1)
+notify_watch._tick()
+check("a fresh animation says 'First frame'",
+      photos and "First frame" in photos[0][1], photos[0][1] if photos else "")
+
+notify_watch._seen.clear()
+photos.clear()
+write_frames_manifest(300, 77)             # resumed, like job_0001 really was
+notify_watch._tick()
+write_frames_manifest(300, 78)
+notify_watch._tick()
+check("a resumed animation says 'first frame since resuming'",
+      photos and "first frame since resuming" in photos[0][1],
+      photos[0][1] if photos else "")
+
+paths.classic_manifest_path = _real_cmp
+qm.set_state(ja["id"], qm.STOPPED)
+st = qm.load_state(); st["running"] = j2["id"]; qm.save_state(st)
 
 print("\n=== 6. nothing running -> nothing sent, and trackers are cleared ===")
 qm.set_state(j2["id"], qm.STOPPED)

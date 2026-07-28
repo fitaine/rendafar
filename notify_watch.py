@@ -55,12 +55,12 @@ def _eta_clock(prog):
         return ""
 
 
-def _caption(job, prog, heading):
+def _caption(job, prog, heading, extra=""):
     unit = prog.get("unit", "tiles")
-    lines = [
-        heading,
-        f"{prog['done']}/{prog['total']} {unit}  ({prog['percent']}%)",
-    ]
+    lines = [heading]
+    if extra:
+        lines.append(extra)
+    lines.append(f"{prog['done']}/{prog['total']} {unit}  ({prog['percent']}%)")
     bits = []
     if prog.get("avg_tile_s"):
         bits.append(f"{notify.hms(prog['avg_tile_s'])}/{unit[:-1]}")
@@ -110,15 +110,19 @@ def _tick():
 
     done = prog.get("done") or 0
 
+    unit1 = (prog.get("unit") or "tiles")[:-1]      # "tile" / "frame"
+
     if running_id not in _seen:
-        # First time this loop notices the job. If it already has tiles done,
+        # First time this loop notices the job. If it already has work done,
         # this is a resume or the server restarting mid-render — not the
         # actual first tile, and faking that would be exactly the kind of lie
-        # this app exists to avoid. Suppress it and only start the periodic
-        # clock from here.
+        # this app exists to avoid.
         _seen[running_id] = {
             "baseline_done": done,
             "first_tile_sent": done > 0,
+            # Complementary to the above: a fresh start needs no resume photo,
+            # a resume needs one and must not be called a first tile.
+            "resume_shot_sent": done == 0,
             "last_periodic": time.time(),
         }
 
@@ -126,9 +130,25 @@ def _tick():
 
     if config.NOTIFY_FIRST_TILE and not s["first_tile_sent"] and done >= 1:
         notify.send_photo(_thumbnail_for(job),
-                          _caption(job, prog, f"📸 First tile — {job['name']}"))
+                          _caption(job, prog,
+                                   f"📸 First {unit1} — {job['name']}"))
         s["first_tile_sent"] = True
         s["last_periodic"] = time.time()   # don't immediately double-send
+        return
+
+    # A resumed render used to send no photo at all until the periodic update
+    # came round, which is up to NOTIFY_PERIODIC_S of silence right after the
+    # moment you most want to know it picked up properly. Suppressing "first
+    # tile" was right; suppressing the confirmation with it was not. So: the
+    # first genuinely NEW frame since resuming, labelled for what it is.
+    if (config.NOTIFY_FIRST_TILE and not s["resume_shot_sent"]
+            and done > s["baseline_done"]):
+        notify.send_photo(
+            _thumbnail_for(job),
+            _caption(job, prog, f"📸 Back rendering — {job['name']}",
+                     extra=f"first {unit1} since resuming"))
+        s["resume_shot_sent"] = True
+        s["last_periodic"] = time.time()
         return
 
     if (config.NOTIFY_PERIODIC_S
