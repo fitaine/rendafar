@@ -41,6 +41,15 @@
    gesture handling inside the page, and overflow-x is a hard backstop against
    anything ever scrolling sideways. */
 html,body{margin:0;padding:0; overflow-x:hidden; touch-action:pan-y}
+
+/* A plain class rule like .actions{display:flex} has the same specificity as
+   the browser's built-in [hidden]{display:none} and, being an author style,
+   wins the cascade regardless of source order — so any element that is both
+   `hidden` and carries such a class stays visible. That silently broke the
+   New Render button on the phone: #newwrap is hidden remotely by JS, but
+   .actions{display:flex} overrode it. One global rule settles it for every
+   current and future use of the attribute. */
+[hidden]{display:none !important}
 body{
   background:var(--bg); color:var(--ink); font-family:var(--body);
   font-size:15px; line-height:1.5;
@@ -74,7 +83,15 @@ body{
          width:100%; word-break:break-all}
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
-.cols{display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px}
+/* minmax(0, 1fr), not a bare 1fr: a plain `1fr` track still grows past 100%
+   of the container when any child inside cannot shrink below its own
+   min-content width (a long unbroken path, a wide row of numbers) — the
+   classic CSS Grid overflow trap. That was why every card's right edge and
+   right-hand corners were clipped by overflow-x:hidden on the phone: the
+   whole grid track, and every card in it, had silently grown wider than the
+   screen. minmax(0, …) lets the track — and min-width:0 on .card below lets
+   each card — actually shrink to fit. */
+.cols{display:grid; grid-template-columns:minmax(0,1fr); gap:14px; margin-top:16px}
 
 /* Mobile stacking order — Queue first, everything else in its previous
    relative order. Independent of the desktop column split below: cards are
@@ -84,7 +101,7 @@ body{
 #previewcard{order:4} #gpucard{order:5} #logcard{order:6}
 
 @media(min-width:900px){
-  .cols{grid-template-columns:1.15fr .85fr; align-items:start}
+  .cols{grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr); align-items:start}
   /* Desktop keeps the original layout: tile map / progress / log on the
      left, preview / GPU / queue on the right. */
   #gridcard{grid-column:1; order:1}
@@ -96,7 +113,12 @@ body{
 }
 
 .card{background:var(--panel); border:1px solid var(--line); border-radius:10px;
-      padding:14px}
+      padding:14px; min-width:0}
+/* Grid items default to min-width:auto (their own min-content size), which is
+   the same trap one level down from .cols above — a card with an unbreakable
+   long string inside would still force itself wider than its track. Anything
+   genuinely unbreakable (a path, a hash) must wrap or ellipsis internally;
+   this just stops the outer box from taking the fall for it. */
 /* Spacing between cards now comes from the grid's own `gap`, since cards are
    direct grid children — a leftover margin-top here would double up. */
 .card-title{font-family:var(--display); font-size:11px; letter-spacing:.18em;

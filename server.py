@@ -609,6 +609,14 @@ def main():
             print(f"  auto-resumed: {started['id']} — {started['name']}")
     print(f"  telegram        :  {'on' if notify.enabled() else 'off (no secrets_local.py)'}")
 
+    # First-tile photo and periodic "how's it going" updates. Unconditional —
+    # unlike the idle watchdog above, this has nothing to do with whether a
+    # window is open. The whole point of Telegram is finding out with nobody
+    # watching, so it runs whenever the server does, web-only sessions included.
+    if notify.enabled():
+        import notify_watch
+        threading.Thread(target=notify_watch.loop, daemon=True).start()
+
     # Localhost only. Remote access arrives through cloudflared, which runs on
     # this machine and connects over 127.0.0.1 — the app is never on the LAN.
     srv = ThreadingHTTPServer((config.HOST, PORT), Handler)

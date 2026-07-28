@@ -56,6 +56,12 @@ PREVIEW_MAX_MP = 80         # megapixels
 PREVIEW_MAX_MB = 200        # file size on disk
 PREVIEW_MAX_PX = 1000       # long edge of the generated thumbnail
 
+# Beyond the lifecycle messages, a background thread can post the first tile
+# as a photo and a periodic "how's it going" with the latest image. Both work
+# even with nobody watching a browser or the desktop app.
+NOTIFY_FIRST_TILE = True
+NOTIFY_PERIODIC_S = 2 * 3600   # 0 disables the periodic update
+
 PORT = 8765
 
 # When launched as a desktop app the server runs hidden, so closing the window
