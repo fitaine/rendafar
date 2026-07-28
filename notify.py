@@ -162,12 +162,89 @@ def _settings_line(job):
             return f"{le:,} px long edge" + (f", {tl} px tiles" if tl else "")
     elif kind == "animation":
         a, b = cfg.get("FRAME_START"), cfg.get("FRAME_END")
+        if a is None or b is None:
+            # Usually absent: for classic renders the .blend is in charge, so
+            # the range lives in the scene and only reaches us via the
+            # manifest the render script writes.
+            try:
+                import paths
+                rng = (paths.read_manifest(job) or {}).get("frames") or []
+                if len(rng) == 2:
+                    a, b = rng
+            except Exception:
+                pass
         if a is not None and b is not None:
             return f"frames {a}–{b}"
     elif kind == "still":
         f = cfg.get("FRAME")
         if f is not None:
             return f"frame {f}"
+    return ""
+
+
+def _frames_todo(job):
+    """
+    The frame numbers still to render, from the manifest, or None.
+
+    The manifest keeps a `grid` of "0"/"1" per frame plus the range endpoints,
+    which is more truthful than the job's config: FRAME_START/FRAME_END are
+    often absent because the .blend is in charge, and the config cannot know
+    what is already on disk anyway.
+
+    Read at the instant the process is spawned, so this is still the PREVIOUS
+    session's manifest — which is exactly what "what is left to do" means.
+    Blender spends seconds loading the scene before rewriting it.
+    """
+    try:
+        import paths
+        m = paths.read_manifest(job)
+    except Exception:
+        return None
+    if not m or m.get("kind") != "frames" or m.get("is_movie"):
+        return None
+
+    grid  = m.get("grid") or ""
+    rng   = m.get("frames") or []
+    total = m.get("total") or 0
+    if not grid or len(rng) != 2 or total < 1:
+        return None
+
+    first, last = rng
+    # Only the endpoints are stored, so recover the step the range was built
+    # with rather than assuming every frame was requested.
+    step = round((last - first) / (total - 1)) if total > 1 else 1
+    step = step or 1
+    return [first + i * step
+            for i, c in enumerate(grid[:total]) if c != "1"]
+
+
+def _resume_line(job):
+    """Where a resumed render is picking up, or "" for a fresh start."""
+    kind = _kind_label(job)
+
+    if kind == "animation":
+        todo = _frames_todo(job)
+        if todo is None:
+            return ""
+        prog  = _progress_of(job) or {}
+        total = prog.get("total") or 0
+        done  = total - len(todo) if total else 0
+        if not done:
+            return ""                      # nothing rendered yet: not a resume
+        bits = [f"resuming at frame {todo[0]}",
+                f"{len(todo)} of {total} frames left"]
+        # Frames can be missing from the middle when one errored and the run
+        # carried on, so "resuming at N" alone would understate the work.
+        contiguous = todo == list(range(todo[0], todo[-1] + 1,
+                                        (todo[1] - todo[0]) if len(todo) > 1 else 1))
+        if not contiguous:
+            bits.append("with gaps earlier in the range")
+        return "  ·  ".join(bits)
+
+    prog = _progress_of(job) or {}
+    total, done = prog.get("total") or 0, prog.get("done") or 0
+    if total and done:
+        return f"resuming  ·  {total - done} of {total} {prog['unit']} left"
     return ""
 
 
@@ -200,9 +277,12 @@ def job_event(event, job, note=None):
         text = f"{icon} Auto-resumed after reboot — {name}{where}"
     elif event == "started":
         settings = _settings_line(job) if job else ""
-        text = f"{icon} Started — {name}"
+        resume   = _resume_line(job) if job else ""
+        text = f"{'🔁' if resume else icon} {'Resumed' if resume else 'Started'} — {name}"
         if kind or settings:
             text += f"\n{kind}{'  ·  ' + settings if settings else ''}"
+        if resume:
+            text += f"\n{resume}"
     elif event == "stopped":
         return          # the user pressed the button; no need to tell them
     else:

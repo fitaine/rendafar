@@ -146,6 +146,10 @@ body{
 .stat span{display:block; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
            color:var(--faint); margin-top:3px}
 .stat.accent b{color:var(--amber)}
+/* The finish time spans the whole row at every breakpoint: five tiles leave a
+   ragged gap in both the 2 and 4 column grids, and this is the one worth
+   reading from across the room anyway. */
+.stat.wide{grid-column:1/-1}
 
 /* ── Tile preview ───────────────────────────────────────────────────────── */
 #tileimg{width:100%; border-radius:6px; display:block; background:var(--panel-2);
@@ -552,7 +556,28 @@ function statRow(p){
     <div class="stat accent"><b>${p.percent}%</b><span>complete</span></div>
     <div class="stat"><b>${p.done}<span style="color:var(--faint)">/${p.total}</span></b><span>${unit}</span></div>
     <div class="stat"><b>${hms(p.eta_s)}</b><span>remaining</span></div>
-    <div class="stat"><b>${hms(p.avg_tile_s)}</b><span>per ${unit.slice(0,-1)}</span></div>`;
+    <div class="stat"><b>${hms(p.avg_tile_s)}</b><span>per ${unit.slice(0,-1)}</span></div>
+    <div class="stat wide"><b>${etaClock(p.eta_at) || "—"}</b><span>should finish</span></div>`;
+}
+
+/* The server sends eta_at as an ISO instant; the phrasing here mirrors
+   paths.format_eta_clock() on the Python side so both screens read the same.
+   Renders run for days, so the day name matters more than the date until the
+   day name stops being unambiguous a week out. */
+function etaClock(iso){
+  if (!iso) return "";
+  const end = new Date(iso);
+  if (isNaN(end)) return "";
+  const now = new Date();
+  const clock = end.toTimeString().slice(0,5);
+  const midnight = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((midnight(end) - midnight(now)) / 86400000);
+  if (days <= 0) return `today ${clock}`;
+  if (days === 1) return `tomorrow ${clock}`;
+  const wd = end.toLocaleDateString(undefined, {weekday:"short"});
+  if (days < 7) return `${wd} ${clock}`;
+  return `${wd} ${String(end.getDate()).padStart(2,"0")} ` +
+         `${end.toLocaleDateString(undefined,{month:"short"})} ${clock}`;
 }
 
 /* One render, three kinds. Derived in one place so the chip, the stripe and

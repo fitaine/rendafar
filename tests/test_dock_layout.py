@@ -84,6 +84,30 @@ check("Reset Layout also brings back a closed panel",
 check("...specifically the Log, which defaults to hidden rather than shown",
       not win.docks["Log"].isVisible())
 
+print("\n=== 2b. the column divider is ONE drag handle, not two ===")
+# Reported live: the vertical divider between the Jobs column and the right
+# hand column showed two draggable lines side by side. The central widget was
+# sized to 0x0 but still present, so it sat between the left and right dock
+# areas and Qt drew a separator on each side of it — two handles with a dead
+# sliver between them. Hiding the central widget makes the areas meet directly.
+win.resize(1400, 850)
+win.show()
+app.processEvents()
+QtCore.QThread.msleep(100)
+app.processEvents()
+
+sep = app.style().pixelMetric(QtWidgets.QStyle.PM_DockWidgetSeparatorExtent)
+jg = win.docks["Jobs"].geometry()
+rg = win.docks["Render"].geometry()
+divider = rg.left() - jg.right() - 1
+
+check("the central widget is hidden, not merely zero-sized",
+      not win.centralWidget().isVisible(),
+      "a 0x0 visible central widget is what produced the double separator")
+check(f"the divider is one separator wide ({divider}px, separator is {sep}px)",
+      divider <= sep + 1,
+      f"two handles measured {2 * sep}px here before the fix")
+
 print("\n=== 3. a tab can be dragged back OUT of a tab group ===")
 # This one is driven by a REAL press/move/release on the QTabBar rather than
 # by setFloating(True). That distinction is the whole point: setFloating()

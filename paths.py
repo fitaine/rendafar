@@ -12,6 +12,7 @@ script:
 The app never creates these folders and never writes into them — it only reads.
 """
 
+import datetime
 import json
 import os
 import time
@@ -194,6 +195,16 @@ def progress(job):
         unit  = "tiles"
 
     avg = sum(times) / len(times) if times else None
+    eta_s = round(avg * (total - done)) if avg and total else None
+    # A duration is the wrong unit for a render measured in days: "ETA 63h 20m"
+    # takes arithmetic to act on, while a wall-clock date answers the question
+    # actually being asked ("can I have the machine back on Thursday?").
+    # Computed here, next to eta_s, so the desktop app, the phone, the CLI and
+    # the Telegram updates all quote the same instant.
+    eta_at = None
+    if eta_s:
+        eta_at = (datetime.datetime.now()
+                  + datetime.timedelta(seconds=eta_s)).isoformat(timespec="seconds")
     return {
         "done":       done,
         "total":      total,
@@ -202,12 +213,44 @@ def progress(job):
         "cols":       m.get("cols") or 0,
         "rows":       m.get("rows") or 0,
         "avg_tile_s": round(avg, 1) if avg else None,
-        "eta_s":      round(avg * (total - done)) if avg and total else None,
+        "eta_s":      eta_s,
+        "eta_at":     eta_at,
         "errors":     m.get("errors") or [],
         "started_at": m.get("started_at"),
         "total_W":    m.get("total_W"),
         "total_H":    m.get("total_H"),
     }
+
+
+def format_eta_clock(eta_at, now=None):
+    """
+    An `eta_at` ISO stamp as something readable at a glance.
+
+    The day matters more than the date here: these renders run 40-80 hours, so
+    a finish time is routinely two or three sleeps away and "Thu 04:15" is what
+    the question was really about. The date is only spelled out once the day
+    name stops being unambiguous, a week out.
+
+    Returns "" for anything missing or unparseable, so callers can concatenate
+    it without guarding.
+    """
+    if not eta_at:
+        return ""
+    try:
+        end = datetime.datetime.fromisoformat(eta_at)
+    except (TypeError, ValueError):
+        return ""
+    now = now or datetime.datetime.now()
+
+    clock = end.strftime("%H:%M")
+    days = (end.date() - now.date()).days
+    if days <= 0:
+        return f"today {clock}"
+    if days == 1:
+        return f"tomorrow {clock}"
+    if days < 7:
+        return f"{end.strftime('%a')} {clock}"
+    return f"{end.strftime('%a %d %b')} {clock}"
 
 
 def latest_tile(job):

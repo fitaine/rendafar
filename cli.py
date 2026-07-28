@@ -154,8 +154,10 @@ def cmd_status(a):
     if p:
         unit = p.get("unit", "tiles")
         print(f"      {unit:<9}: {p['done']}/{p['total']}  ({p['percent']}%)")
+        clock = paths.format_eta_clock(p.get("eta_at"))
         print(f"      avg {unit[:-1]:<5}: {_hms(p['avg_tile_s'])}"
-              f"    ETA {_hms(p['eta_s'])}")
+              f"    ETA {_hms(p['eta_s'])}"
+              + (f"  ({clock})" if clock else ""))
     lt = paths.latest_tile(job)
     if lt:
         print(f"      newest   : {os.path.basename(lt[0])}  "

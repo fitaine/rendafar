@@ -44,6 +44,17 @@ def _thumbnail_for(job):
     return data
 
 
+def _eta_clock(prog):
+    """paths.format_eta_clock for this progress dict, or "" — imported lazily
+    to match notify.py's rule that the notifier never hard-depends on the rest
+    of the app at import time."""
+    try:
+        import paths
+        return paths.format_eta_clock(prog.get("eta_at"))
+    except Exception:
+        return ""
+
+
 def _caption(job, prog, heading):
     unit = prog.get("unit", "tiles")
     lines = [
@@ -57,6 +68,11 @@ def _caption(job, prog, heading):
         bits.append(f"ETA {notify.hms(prog['eta_s'])}")
     if bits:
         lines.append("  ·  ".join(bits))
+    # On a phone, hours away from the machine, the wall-clock finish is the
+    # part worth reading — a bare "ETA 63h 20m" still needs working out.
+    clock = _eta_clock(prog)
+    if clock:
+        lines.append(f"should finish {clock}")
 
     try:
         import gpu

@@ -15,6 +15,7 @@ import os
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import config
+import paths
 
 from . import api, panels, theme
 from .jobs_table import JobsTable, job_kind
@@ -448,9 +449,17 @@ class MainWindow(QtWidgets.QMainWindow):
         bar.addWidget(header)
         self.addToolBar(QtCore.Qt.TopToolBarArea, bar)
 
+        # Every panel is a dock, so there is nothing for the central widget to
+        # hold — but it must be HIDDEN, not merely sized to nothing. A zero-
+        # width central widget still sits between the left and right dock
+        # areas, and Qt puts a separator on each side of it, so the divider
+        # between the Jobs column and the right-hand column came out as two
+        # drag handles 8px apart (measured: 2.0x the 4px separator extent)
+        # with a dead sliver between them. Hidden, the areas meet directly and
+        # there is one handle.
         hollow = QtWidgets.QWidget()
-        hollow.setFixedSize(0, 0)
         self.setCentralWidget(hollow)
+        hollow.hide()
 
         self._build_docks()
 
@@ -712,7 +721,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if p and p.get("total"):
             bits.append(f"{p['done']}/{p['total']} {p['unit']} ({p['percent']}%)")
             if p.get("eta_s") is not None:
-                bits.append(f"ETA {hms(p['eta_s'])}")
+                clock = paths.format_eta_clock(p.get("eta_at"))
+                bits.append(f"ETA {hms(p['eta_s'])}"
+                            + (f" ({clock})" if clock else ""))
             if p.get("avg_tile_s"):
                 bits.append(f"{hms(p['avg_tile_s'])}/{p['unit'][:-1]}")
         if s.get("session_s"):
@@ -752,10 +763,12 @@ class MainWindow(QtWidgets.QMainWindow):
         p = s.get("progress")
         if p and p.get("total"):
             unit = p["unit"]
+            clock = paths.format_eta_clock(p.get("eta_at"))
             self.render_meta.setText(
                 f"{p['done']} of {p['total']} {unit}   ·   {p['percent']}%   ·   "
                 f"{hms(p.get('avg_tile_s'))} per {unit[:-1]}   ·   "
-                f"ETA {hms(p.get('eta_s'))}")
+                f"ETA {hms(p.get('eta_s'))}"
+                + (f"   ·   done {clock}" if clock else ""))
         else:
             self.render_meta.setText("")
 
