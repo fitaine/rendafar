@@ -528,9 +528,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_docks(self):
         self.docks = {}
+        # GroupedDragging is not optional here, despite the name suggesting it
+        # only affects dragging groups. Qt's QMainWindowTabBar::mouseMoveEvent
+        # gates its ENTIRE drag-a-tab-out-of-the-tab-bar code path behind this
+        # flag. Without it a QTabBar can only ever reorder its own tabs, so a
+        # tabbed panel becomes permanently trapped: you can drag panels in to
+        # form a tab group, but nothing can ever come back out.
         self.setDockOptions(QtWidgets.QMainWindow.AnimatedDocks |
                             QtWidgets.QMainWindow.AllowNestedDocks |
-                            QtWidgets.QMainWindow.AllowTabbedDocks)
+                            QtWidgets.QMainWindow.AllowTabbedDocks |
+                            QtWidgets.QMainWindow.GroupedDragging)
 
         # Queue and .blend settings in one table: they describe the same jobs,
         # and two panels meant reading one while remembering the other.
