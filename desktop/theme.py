@@ -144,6 +144,14 @@ def stylesheet():
     QPushButton#primary:hover:!disabled {{ background: #B6E0F0; }}
     QPushButton#primary:disabled {{ background: {ROCK}; color: {FAINT};
                                     border-color: {LINE}; }}
+    /* Sits inline with a checkbox or a caption in a panel header row, where
+       the standard 8x15 padding would tower over the text beside it. */
+    QPushButton#mini {{
+        padding: 3px 9px;
+        font-size: 11px;
+        letter-spacing: .5px;
+        border-radius: 5px;
+    }}
     QPushButton#danger {{ color: #F2A19C; border-color: rgba(229,83,75,0.5); }}
     QPushButton#danger:hover:!disabled {{ background: rgba(229,83,75,0.14);
                                           border-color: {ALERT}; }}

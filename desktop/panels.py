@@ -288,9 +288,19 @@ class PreviewPanel(Panel):
         self.enabled.setToolTip(
             "Building the preview decodes the image on this machine, which "
             "competes with the render. Turn it off on heavy scenes.")
+        # Straight to the images being written, without going via the menu:
+        # this panel is where you are already looking when you want them.
+        # main_window owns the click, because only it knows which job is
+        # selected and where that job writes.
+        self.btn_folder = QtWidgets.QPushButton("Open folder")
+        self.btn_folder.setObjectName("mini")
+        self.btn_folder.setToolTip(
+            "Open the folder these images are being written to")
+
         self.caption = QtWidgets.QLabel("")
         self.caption.setObjectName("meta")
         row.addWidget(self.enabled)
+        row.addWidget(self.btn_folder)
         row.addStretch(1)
         row.addWidget(self.caption)
         self.lay.addLayout(row)

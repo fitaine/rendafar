@@ -630,6 +630,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _preview_panel(self):
         self.preview = panels.PreviewPanel()
+        self.preview.btn_folder.clicked.connect(self.open_output_folder)
         return self.preview
 
     def _gpu_panel(self):
@@ -865,9 +866,15 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             widget.setEnabled(on)
 
-        has_job = bool(job or s.get("job"))
-        self.act_open_blend_dir.setEnabled(has_job)
-        self.act_open_out_dir.setEnabled(has_job)
+        # Same job open_output_folder / open_blend_folder will act on, so what
+        # is clickable matches what will actually work. A classic render has no
+        # output_dir until it has started — it comes from the .blend — so the
+        # button is greyed rather than offering to open nothing.
+        target = job or s.get("job") or {}
+        self.act_open_blend_dir.setEnabled(bool(target.get("blend")))
+        can_open_out = bool(target.get("output_dir"))
+        self.act_open_out_dir.setEnabled(can_open_out)
+        self.preview.btn_folder.setEnabled(can_open_out)
 
     # ── actions ──────────────────────────────────────────────────────────
 
