@@ -623,7 +623,7 @@ function queueList(jobs, runningId){
         <div class="job-sub">${j.output_dir || j.blend}</div>
       </div>
       <div class="job-acts">
-        ${resumable ? `<button class="mini" onclick="act('resume','${j.id}')">Resume</button>` : ""}
+        ${resumable ? `<button class="mini" onclick="act('start','${j.id}')">Resume</button>` : ""}
         ${!running && j.state === "queued" ? `<button class="mini" onclick="act('move','${j.id}',-1)">↑</button>` : ""}
         ${!running ? `<button class="mini" onclick="removeJob('${j.id}')">Remove</button>` : ""}
       </div>
@@ -636,7 +636,9 @@ function actions(s){
   if (s.busy)
     b.push(`<button class="danger" onclick="act('stop')">Stop render</button>`);
   else if (s.next_id)
-    b.push(`<button class="primary" onclick="act('start')">Start next job</button>`);
+    // "Start queue", not "Start next job": it keeps going by itself, taking
+    // each job in turn as the previous one finishes.
+    b.push(`<button class="primary" onclick="act('start')">Start queue</button>`);
   $("actions").innerHTML = b.join("");
 }
 

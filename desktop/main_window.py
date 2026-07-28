@@ -322,8 +322,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_stop.triggered.connect(self.do_stop)
 
         m.addSeparator()
-        self.act_resume = m.addAction("Res&ume selected")
-        self.act_resume.triggered.connect(self.do_resume)
         self.act_up = m.addAction("Move up")
         self.act_up.setShortcut("Ctrl+Up")
         self.act_up.triggered.connect(lambda: self.do_move(-1))
@@ -493,8 +491,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         btns = QtWidgets.QVBoxLayout()
         btns.setSpacing(7)
-        # "Start queue", not "Start next job": it runs the queue from here on,
-        # advancing by itself as each render finishes.
+        # The label is rewritten by _start_target() as the selection changes:
+        # "Start queue" when running the queue from here on (advancing by
+        # itself as each render finishes), "Resume render" when a stopped job
+        # is selected. One button, because they are one intention.
         self.btn_start = QtWidgets.QPushButton("Start queue")
         self.btn_start.setObjectName("primary")
         self.btn_start.clicked.connect(self.do_start)
@@ -594,8 +594,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(7)
-        self.btn_resume = QtWidgets.QPushButton("Resume")
-        self.btn_resume.clicked.connect(self.do_resume)
         self.btn_up = QtWidgets.QPushButton("↑")
         self.btn_up.setFixedWidth(36)
         self.btn_up.clicked.connect(lambda: self.do_move(-1))
@@ -604,7 +602,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_down.clicked.connect(lambda: self.do_move(1))
         self.btn_remove = QtWidgets.QPushButton("Remove")
         self.btn_remove.clicked.connect(self.do_remove)
-        for b in (self.btn_resume, self.btn_up, self.btn_down):
+        for b in (self.btn_up, self.btn_down):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(self.btn_remove)
@@ -695,9 +693,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dot.set_state(theme.FAINT, False)
             self.state_label.setText("Ready" if s.get("next_id") else "Idle")
 
-        self.job_label.setText(
-            job["name"] if job else
-            ("Nothing running" if s.get("next_id") else "No renders queued"))
+        if job:
+            self.job_label.setText(job["name"])
+        elif s.get("next_id"):
+            self.job_label.setText("Nothing running")
+        else:
+            # "No renders queued" is technically true of a stopped job but
+            # reads as "there is nothing here", which is how a paused 40-hour
+            # render came to look like an empty app with a dead Start button.
+            paused = [j for j in (s.get("queue") or [])
+                      if j.get("state") in self.RESUMABLE]
+            self.job_label.setText(
+                f"{len(paused)} render{'s' if len(paused) > 1 else ''} stopped "
+                "— select one to resume" if paused else "No renders queued")
 
         bits = []
         p = s.get("progress")
@@ -781,22 +789,63 @@ class MainWindow(QtWidgets.QMainWindow):
         return next((j for j in (self._last.get("queue") or [])
                      if j["id"] == jid), None)
 
+    RESUMABLE = ("stopped", "failed", "interrupted")
+
+    def _start_target(self):
+        """
+        Work out what the one Start button should do right now.
+
+        Start and Resume used to be two buttons in two different panels, and
+        resuming a stopped render meant pressing both: Resume only moved the
+        job back to the front of the queue as 'queued' — it never actually
+        started anything — so Start stayed greyed out until you had pressed
+        Resume first. For the most common action in the app ("carry on with my
+        render") that is a two-panel scavenger hunt ending at a dead button.
+
+        They are one button now. The server already supported this exactly:
+        controller.start(job_id) jumps a job to the front and re-queues it if
+        it was stopped, which is precisely resume-then-start in one call.
+
+        Returns (job_id_or_None, label, enabled). Anything that presses the
+        button must go through here, so the label can never promise something
+        different from what the click does.
+        """
+        s = self._last
+        if s.get("busy"):
+            return None, "Start queue", False
+
+        job = self._selected_job()
+        if job:
+            # An explicit selection wins over queue order: picking a row and
+            # pressing Start should run THAT job, not silently something else.
+            if job.get("state") in self.RESUMABLE:
+                return job["id"], "Resume render", True
+            if job.get("state") == "queued":
+                return job["id"], "Start selected", True
+            # 'done' deliberately falls through. Restarting a finished job
+            # would re-render tiles that already cost hours, so it is not
+            # something a single unconfirmed click should be able to do.
+
+        if s.get("next_id"):
+            return None, "Start queue", True
+        return None, "Start queue", False
+
     def _sync_buttons(self):
         """Keep the buttons and the matching menu actions in one state."""
         s = self._last
         busy = bool(s.get("busy"))
-        can_start = not busy and bool(s.get("next_id"))
+
+        _, start_label, can_start = self._start_target()
+        self.btn_start.setText(start_label)
+        self.act_start.setText("&" + start_label)
 
         job = self._selected_job()
         running = bool(job and job["id"] == s.get("job_id"))
-        can_resume = bool(job) and job.get("state") in ("stopped", "failed",
-                                                        "interrupted")
         can_edit = bool(job) and not running
 
         for widget, on in (
             (self.btn_start, can_start),   (self.act_start, can_start),
             (self.btn_stop, busy),         (self.act_stop, busy),
-            (self.btn_resume, can_resume), (self.act_resume, can_resume),
             (self.btn_up, can_edit),       (self.act_up, can_edit),
             (self.btn_down, can_edit),     (self.act_down, can_edit),
             (self.btn_remove, can_edit),   (self.act_remove, can_edit),
@@ -839,7 +888,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.do_new(path)
 
     def do_start(self):
-        self._act(api.start)
+        job_id, _, enabled = self._start_target()
+        if not enabled:
+            return
+        self._act(api.start, job_id)
 
     def do_stop(self):
         job = self._last.get("job") or {}
@@ -850,11 +902,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 "when you resume. Everything already finished is kept.",
         ) == QtWidgets.QMessageBox.Yes:
             self._act(api.stop)
-
-    def do_resume(self):
-        jid = self.queue.selected_job_id()
-        if jid:
-            self._act(api.resume, jid)
 
     def do_move(self, offset):
         jid = self.queue.selected_job_id()
