@@ -282,6 +282,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _size_docks(self):
         self.resizeDocks([self.docks["Jobs"], self.docks["Render"]],
                          [780, 460], QtCore.Qt.Horizontal)
+        # Render/Preview/GPU are three separate panels stacked in the same
+        # column (not tabbed — see _build_docks), so their share of the
+        # height is set directly: the tile map is the thing actually watched,
+        # Preview and GPU are glanced at.
+        self.resizeDocks([self.docks["Render"], self.docks["Preview"],
+                         self.docks["GPU"]],
+                         [480, 260, 200], QtCore.Qt.Vertical)
 
     def reset_layout(self):
         """Put every panel back, including any that were closed."""
@@ -555,10 +562,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("Log", self._log_panel(), QtCore.Qt.BottomDockWidgetArea,
                    visible=False)
 
-        # Preview and GPU share a spot as tabs by default, so the tile map gets
-        # real height instead of a sliver. Either can be dragged out again.
-        self.tabifyDockWidget(self.docks["Preview"], self.docks["GPU"])
-        self.docks["Preview"].raise_()
+        # Render, Preview and GPU stack as three separate panels in the right
+        # column — not pre-tabbed. An earlier version tabbed Preview and GPU
+        # together by default so the tile map got real height instead of a
+        # sliver, but that meant "Reset layout" always re-glued them, which is
+        # the opposite of what a reset should do when what you actually want
+        # is every panel separate. The tile map gets its height honestly now,
+        # from _size_docks below, instead of by hiding a panel behind a tab.
+        #
+        # Tabs still work great — dragging one panel onto another still
+        # creates a tab group, same as before. This only changes the default.
+        #
         # Tabs on top, like every other panelled application.
         for area in (QtCore.Qt.LeftDockWidgetArea, QtCore.Qt.RightDockWidgetArea,
                      QtCore.Qt.TopDockWidgetArea, QtCore.Qt.BottomDockWidgetArea):
