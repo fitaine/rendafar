@@ -116,6 +116,15 @@ class CollapsibleDock(QtWidgets.QDockWidget):
         self._collapsed = False
         self._sizes = None
 
+        # Floating is allowed, not forbidden: dragging a dock at all — moving
+        # it between areas, or pulling it out of a tab group — is Qt's
+        # floating machinery running mid-drag. Turning the feature off
+        # entirely (the first attempt) stopped the panel becoming a loose
+        # window, but also stopped it being draggable out of a tab group,
+        # which is the bug this fixes. Instead: let it float, then snap it
+        # back into the main window the instant it does.
+        self.topLevelChanged.connect(self._on_floated)
+
         bar = QtWidgets.QWidget()
         lay = QtWidgets.QHBoxLayout(bar)
         lay.setContentsMargins(10, 4, 6, 4)
@@ -179,6 +188,18 @@ class CollapsibleDock(QtWidgets.QDockWidget):
 
     def is_collapsed(self):
         return self._collapsed
+
+    def _on_floated(self, floating):
+        """
+        The moment a panel actually becomes a free window, redock it.
+
+        Deferred with a timer: calling setFloating() from inside the very
+        signal that announces the float change confuses Qt's drag state, and
+        the panel would visibly jump. One event-loop turn later it is a clean,
+        deliberate action instead.
+        """
+        if floating:
+            QtCore.QTimer.singleShot(0, lambda: self.setFloating(False))
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -491,10 +512,14 @@ class MainWindow(QtWidgets.QMainWindow):
         d.setObjectName("dock_" + title.lower().replace(" ", "_"))
         d.setWidget(widget)
         d.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
-        # Movable and closable, but NOT floatable: panels rearrange inside the
-        # window and never tear off into loose windows of their own.
+        # Floatable is ON — see CollapsibleDock._on_floated. Dragging a dock
+        # anywhere, including out of a tab group, is Qt's floating machinery
+        # running mid-drag; disabling the feature blocked the drag itself, not
+        # just the end state. The panel is snapped back the instant it
+        # actually floats, so it still never ends up as a loose window.
         d.setFeatures(QtWidgets.QDockWidget.DockWidgetMovable |
-                      QtWidgets.QDockWidget.DockWidgetClosable)
+                      QtWidgets.QDockWidget.DockWidgetClosable |
+                      QtWidgets.QDockWidget.DockWidgetFloatable)
         self.addDockWidget(area, d)
         d.setVisible(visible)
         self.docks[title] = d
