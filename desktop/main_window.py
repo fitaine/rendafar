@@ -116,14 +116,20 @@ class CollapsibleDock(QtWidgets.QDockWidget):
         self._collapsed = False
         self._sizes = None
 
-        # Floating is allowed, not forbidden: dragging a dock at all — moving
-        # it between areas, or pulling it out of a tab group — is Qt's
-        # floating machinery running mid-drag. Turning the feature off
-        # entirely (the first attempt) stopped the panel becoming a loose
-        # window, but also stopped it being draggable out of a tab group,
-        # which is the bug this fixes. Instead: let it float, then snap it
-        # back into the main window the instant it does.
-        self.topLevelChanged.connect(self._on_floated)
+        # Floating is simply allowed — same as Photoshop, VS Code, JetBrains,
+        # even Blender itself: drag a panel far enough and it becomes its own
+        # small window; drop it back onto the main window to redock.
+        #
+        # Two earlier attempts tried to auto-snap a floated panel back into
+        # place (first: immediately on topLevelChanged, which fired mid-drag
+        # and cancelled every drag before it could be dropped anywhere; then:
+        # only after the mouse button was released, which still could not
+        # tell "dropped back where it started" from "dropped in a genuinely
+        # new spot" and sometimes reverted a legitimate redock). Both fought
+        # Qt's own well-tested drag-and-dock mechanism instead of using it, and
+        # both broke real dragging in a different way. Not fighting it is the
+        # fix — a stray floating panel is one drag back onto the main window,
+        # same as it would be in any of the apps above.
 
         bar = QtWidgets.QWidget()
         lay = QtWidgets.QHBoxLayout(bar)
@@ -188,31 +194,6 @@ class CollapsibleDock(QtWidgets.QDockWidget):
 
     def is_collapsed(self):
         return self._collapsed
-
-    def _on_floated(self, floating):
-        """
-        Redock a panel once it ends up as a free window — but only once the
-        drag that caused it is actually finished.
-
-        Dragging a dock's title/tab at all is Qt floating it transiently for
-        the duration of the drag, and topLevelChanged(True) fires the moment
-        that starts, with the mouse still down. Snapping back immediately (the
-        first version) fired mid-drag and yanked the panel back into place
-        before the user could drop it anywhere — which is exactly why it
-        "wouldn't separate" from the GPU tab. Waiting for the mouse button to
-        actually be released distinguishes a genuine detach (drop in empty
-        space) from an ordinary reposition.
-        """
-        if floating:
-            self._await_release()
-
-    def _await_release(self):
-        if not self.isFloating():
-            return                        # Qt already redocked it — done
-        if QtWidgets.QApplication.mouseButtons() == QtCore.Qt.NoButton:
-            self.setFloating(False)       # button is up: a real detach, undo it
-        else:
-            QtCore.QTimer.singleShot(40, self._await_release)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -532,11 +513,11 @@ class MainWindow(QtWidgets.QMainWindow):
         d.setObjectName("dock_" + title.lower().replace(" ", "_"))
         d.setWidget(widget)
         d.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
-        # Floatable is ON — see CollapsibleDock._on_floated. Dragging a dock
-        # anywhere, including out of a tab group, is Qt's floating machinery
-        # running mid-drag; disabling the feature blocked the drag itself, not
-        # just the end state. The panel is snapped back the instant it
-        # actually floats, so it still never ends up as a loose window.
+        # Floatable is ON: standard Qt behaviour, a panel can become its own
+        # window if dragged out far enough, same as Photoshop/VS Code/
+        # JetBrains/Blender. Disabling it (an earlier attempt) also disabled
+        # dragging a panel out of a tab group at all, which is the opposite of
+        # what "rearrange panels freely" needs.
         d.setFeatures(QtWidgets.QDockWidget.DockWidgetMovable |
                       QtWidgets.QDockWidget.DockWidgetClosable |
                       QtWidgets.QDockWidget.DockWidgetFloatable)
