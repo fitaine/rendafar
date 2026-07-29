@@ -50,16 +50,18 @@ def main():
     from desktop import api, theme
     from desktop.main_window import MainWindow
 
-    app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("Rendafar")
-    # Its own AppUserModelID, or Windows groups the window under python.exe in
-    # the taskbar and shows Python's icon instead of Rendafar's.
+    # Before the QApplication, so no window can be created under the wrong
+    # identity. This is only half the contract — the shortcuts have to declare
+    # the same id, which install_shortcuts.ps1 does. See app_id.py.
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "Buccino.Rendafar.Desktop.1")
+        from app_id import APP_ID
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     except Exception:
         pass
+
+    app = QtWidgets.QApplication(sys.argv)
+    app.setApplicationName("Rendafar")
 
     theme.apply(app)
 
