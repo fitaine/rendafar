@@ -24,6 +24,24 @@ class Panel(QtWidgets.QWidget):
         self.lay.setSpacing(8)
 
 
+class _ShrinkableLogView(QtWidgets.QPlainTextEdit):
+    """
+    A log view that can be squashed to a sliver.
+
+    QPlainTextEdit reports a minimumSizeHint tall enough for a few lines — 58px
+    with this font — and QDockWidget honours it, so the splitter above the Log
+    stopped dead however hard it was dragged: asking for 20px still gave 139.
+
+    Only the floor is lowered. sizeHint is deliberately left alone, because
+    clearing the minimum the blunt way (a size policy of Ignored) also throws
+    away the preferred height, and the Log would then *open* as a sliver every
+    time instead of at a readable size.
+    """
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(0, 0)
+
+
 class LogPanel(Panel):
     """
     Blender's output, live.
@@ -48,12 +66,13 @@ class LogPanel(Panel):
         row.addStretch(1)
         row.addWidget(self.count)
         copy = QtWidgets.QPushButton("Copy")
+        copy.setObjectName("mini")      # the rest of this row's floor
         copy.setToolTip("Copy everything shown to the clipboard")
         copy.clicked.connect(self.copy_all)
         row.addWidget(copy)
         self.lay.addLayout(row)
 
-        self.view = QtWidgets.QPlainTextEdit()
+        self.view = _ShrinkableLogView()
         self.view.setReadOnly(True)
         self.view.setMaximumBlockCount(4000)     # bounded memory on long renders
         self.view.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)

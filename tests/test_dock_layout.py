@@ -189,6 +189,37 @@ if bar is not None:
 drag_win.close()
 app.processEvents()
 
+print("\n=== 3b. the Log panel can be dragged down to a sliver ===")
+# Reported live: the separator above the Log would not drag down. QPlainTextEdit
+# reports a minimumSizeHint tall enough for a few lines (58px), QDockWidget
+# honours it, and the whole dock bottomed out at 139px — asking resizeDocks for
+# 20px still returned 139.
+log = win.docks["Log"]
+log.setVisible(True)
+app.processEvents()
+QtCore.QThread.msleep(120)
+app.processEvents()
+
+floor = log.minimumSizeHint().height()
+check(f"the Log floor is well under the old 139px (now {floor}px)",
+      floor < 100,
+      "this is what stopped the splitter dead")
+
+# The blunt fix — a vertical size policy of Ignored — also throws away the
+# preferred height, so the Log would open as a sliver every time. Lowering the
+# floor must not cost the sensible default.
+hint = log.sizeHint().height()
+check(f"...without flattening the height it OPENS at ({hint}px)",
+      hint > 200,
+      "clearing the minimum the blunt way drops sizeHint to the floor too")
+
+view = log.widget().view
+check("the text view reports no minimum of its own",
+      view.minimumSizeHint().height() == 0,
+      f"got {view.minimumSizeHint().height()}")
+check("...but still has a real preferred height",
+      view.sizeHint().height() > 100, f"got {view.sizeHint().height()}")
+
 print("\n=== 4. layouts still save and restore with grouped dragging on ===")
 # GroupedDragging makes Qt use QDockWidgetGroupWindow for floating groups,
 # which is a different structure to serialise — worth proving saveState and
