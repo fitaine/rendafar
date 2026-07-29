@@ -26,7 +26,9 @@ COLUMNS = [
     ("state",      "State",       70),
     ("name",       "Name",        170),
     ("camera",     "Camera",      118),
-    ("resolution", "Resolution",  92),
+    # Wide enough for a tiled render's assembled size: "120000×120000" is 13
+    # mono characters, where a classic render's "4000×4000" is 9.
+    ("resolution", "Resolution",  116),
     ("samples",    "Samples",     62),
     ("frames",     "Frames",      74),
     ("format",     "Format",      62),
@@ -178,6 +180,36 @@ class JobsTable(QtWidgets.QTableWidget):
     changed = QtCore.Signal()            # something was edited; refresh
     error = QtCore.Signal(str)
 
+    def _tiled_grid(self, job, info):
+        """
+        The image a tiled job will actually produce, or None.
+
+        Computed with the job's OWN pinned script rather than a copy of the
+        maths here, so the number on screen cannot drift from the number the
+        render uses. grid_preview caches the lifted compute_grid by script
+        mtime, so this costs one ast parse per script and plain arithmetic per
+        row after that — cheap enough for the 2s poll.
+        """
+        cfg = job.get("config") or {}
+        key = (job.get("script"), cfg.get("LONG_EDGE"), cfg.get("TILE_LONG"),
+               info.get("resolution_x"), info.get("resolution_y"),
+               info.get("pixel_aspect_x"), info.get("pixel_aspect_y"))
+        if key in self._grid:
+            return self._grid[key]
+
+        grid = None
+        try:
+            import grid_preview
+            g = grid_preview.preview(job.get("script") or "", info,
+                                     cfg.get("LONG_EDGE") or 120000,
+                                     cfg.get("TILE_LONG") or 4096)
+            if not g.get("error"):
+                grid = g
+        except Exception:
+            pass                       # a missing script just shows "…"
+        self._grid[key] = grid
+        return grid
+
     def __init__(self, parent=None):
         super().__init__(0, len(COLUMNS), parent)
         self.setHorizontalHeaderLabels([c[1] for c in COLUMNS])
@@ -209,6 +241,7 @@ class JobsTable(QtWidgets.QTableWidget):
         self._ids = []
         self._pending = None                # refresh held back during an edit
         self._blend = {}                    # blend path -> (mtime, info)
+        self._grid = {}                     # tiled job settings -> grid dict
 
 
     # ── data in ──────────────────────────────────────────────────────────
@@ -325,13 +358,29 @@ class JobsTable(QtWidgets.QTableWidget):
 
         if unknown:
             res = samples = fmt = "…"
-        else:
+            res_why = "Reading the .blend…"
+        elif classic:
             res = f"{info.get('final_x')}×{info.get('final_y')}"
+            res_why = "Comes from the .blend"
             samples = str(info.get("samples") or "—")
             fmt = cfg.get("FILE_FORMAT") or info.get("file_format") or "—"
-        self._cell(row, "resolution", res, mono=True,
-                   locked_why="Comes from the .blend"
-                              if classic else "Set by the tiled grid")
+        else:
+            # A tiled render never produces the .blend's resolution. The script
+            # reads it for its ASPECT RATIO only, then sets the scene to one
+            # tile (4096 px) per render and assembles the grid. Showing the
+            # scene's own number here read as a promise the render would never
+            # keep — a 2000x2000 @200% scene displayed "4000×4000" while every
+            # tile on disk was 4096×4096 and the finished image 120000×120000.
+            g = self._tiled_grid(job, info)
+            res = f"{g['total_w']}×{g['total_h']}" if g else "…"
+            res_why = (
+                f"{g['cols']}×{g['rows']} tiles of {g['tile_w']}×{g['tile_h']} px.\n"
+                f"The .blend's own {info.get('final_x')}×{info.get('final_y')} is "
+                f"used only for its aspect ratio."
+                if g else "Set by the tiled grid")
+            samples = str(info.get("samples") or "—")
+            fmt = cfg.get("FILE_FORMAT") or info.get("file_format") or "—"
+        self._cell(row, "resolution", res, mono=True, locked_why=res_why)
         self._cell(row, "samples", samples, mono=True,
                    locked_why="Comes from the .blend — never overridden")
 
