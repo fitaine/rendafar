@@ -112,9 +112,70 @@ win.do_start()
 check("...and calls start() with no job id",
       calls and calls[0][1] == (None,), f"got {calls}")
 
+# Queue order beats selection. Selecting a row is how you inspect a job, so
+# letting it re-point Start meant highlighting a row to read its settings
+# quietly jumped that job ahead of everything above it. The arrows are how you
+# say "this one first" — that is deliberate and visible, a selection is not.
 jid, label, on = scenario(QUEUED, selected_id="job_0002", next_id="job_0002")
-check("selecting a queued job targets it explicitly",
-      jid == "job_0002" and label == "Start selected", f"got {jid!r} {label!r}")
+check("selecting a queued job does NOT re-target Start",
+      jid is None and label == "Start queue", f"got {jid!r} {label!r}")
+
+jid, label, on = scenario(QUEUED, selected_id="job_0009", next_id="job_0002")
+check("...even when the selected job is further down the queue",
+      jid is None and label == "Start queue",
+      f"selecting job_0009 must not jump it ahead of job_0002. got {jid!r} {label!r}")
+
+print("\n=== 4b. a stopped job stays reachable ===")
+# The cost of queue-order-wins: a stopped job is NOT in the queue (next_queued
+# skips it), so no amount of moving it up reaches it, and Start now offers the
+# queue instead. Without an explicit way out it would be unstartable whenever
+# anything at all is queued — which is exactly the live situation: one stopped
+# animation sitting behind two queued 120k renders.
+BOTH = [{"id": "job_0001", "name": "Gervasutti", "state": "stopped"},
+        {"id": "job_0002", "name": "Bure",       "state": "queued"}]
+
+jid, label, on = scenario(BOTH, selected_id="job_0001", next_id="job_0002")
+check("a stopped job selected with a full queue: Start runs the QUEUE",
+      jid is None and label == "Start queue", f"got {jid!r} {label!r}")
+
+win._sync_buttons()
+check("...and Render > Resume selected is enabled instead",
+      win.act_resume.isEnabled(),
+      "otherwise the stopped job could never be started at all")
+
+calls.clear()
+win.do_resume()
+check("...which starts that specific job, in one call",
+      len(calls) == 1 and calls[0][0] == "start"
+      and calls[0][1] == ("job_0001",), f"got {calls}")
+
+# And when the queue empties, the button itself offers it again.
+jid, label, on = scenario(BOTH, selected_id="job_0001", next_id=None)
+check("with nothing queued, Start reads 'Resume render' again",
+      jid == "job_0001" and label == "Resume render", f"got {jid!r} {label!r}")
+
+print("\n=== 4c. Resume selected refuses what it should ===")
+calls.clear()
+scenario(QUEUED, selected_id="job_0002", next_id="job_0002")
+win._sync_buttons()
+check("a QUEUED job is not resumable", not win.act_resume.isEnabled())
+win.do_resume()
+check("...and triggering it anyway does nothing", calls == [], f"got {calls}")
+
+calls.clear()
+scenario(DONE, selected_id="job_0003", next_id=None)
+win._sync_buttons()
+check("a DONE job is not resumable either", not win.act_resume.isEnabled(),
+      "re-rendering hours of finished tiles is not a one-click action")
+win.do_resume()
+check("...and triggering it does nothing", calls == [], f"got {calls}")
+
+calls.clear()
+scenario(BOTH, selected_id="job_0001", busy=True, next_id=None,
+         job_id="job_0002")
+win._sync_buttons()
+check("nothing is resumable while a render is running",
+      not win.act_resume.isEnabled())
 
 print("\n=== 5. guards ===")
 jid, label, on = scenario(STOPPED, selected_id="job_0001", busy=True,

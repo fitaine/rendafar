@@ -322,6 +322,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_stop.setShortcut("Ctrl+.")
         self.act_stop.triggered.connect(self.do_stop)
 
+        # The one thing queue order cannot express. A stopped job is not in the
+        # queue, so no amount of moving it up reaches it, and the Start button
+        # only offers to resume when nothing at all is queued. Deliberately a
+        # menu entry rather than a second button: it is the exception, not the
+        # everyday action.
+        self.act_resume = m.addAction("Res&ume selected")
+        self.act_resume.triggered.connect(self.do_resume)
+
         m.addSeparator()
         self.act_up = m.addAction("Move up")
         self.act_up.setShortcut("Ctrl+Up")
@@ -828,20 +836,25 @@ class MainWindow(QtWidgets.QMainWindow):
         if s.get("busy"):
             return None, "Start queue", False
 
-        job = self._selected_job()
-        if job:
-            # An explicit selection wins over queue order: picking a row and
-            # pressing Start should run THAT job, not silently something else.
-            if job.get("state") in self.RESUMABLE:
-                return job["id"], "Resume render", True
-            if job.get("state") == "queued":
-                return job["id"], "Start selected", True
-            # 'done' deliberately falls through. Restarting a finished job
-            # would re-render tiles that already cost hours, so it is not
-            # something a single unconfirmed click should be able to do.
-
+        # QUEUE ORDER WINS. Selecting a row is how you inspect a job, and it
+        # used to also decide what Start did — so highlighting a row to read
+        # its settings quietly re-pointed the button at it and jumped it ahead
+        # of everything above it. Order is the thing that is deliberate and
+        # visible; the arrows are how you say "this one first".
         if s.get("next_id"):
             return None, "Start queue", True
+
+        # Nothing is queued. A stopped job is NOT in the queue — next_queued()
+        # skips it — so the arrows cannot reach it and this is the only way to
+        # start one. Without this branch a stopped render would be unstartable
+        # from the button entirely.
+        job = self._selected_job()
+        if job and job.get("state") in self.RESUMABLE:
+            return job["id"], "Resume render", True
+        # 'done' deliberately falls through. Restarting a finished job would
+        # re-render tiles that already cost hours, so it is not something a
+        # single unconfirmed click should be able to do.
+
         return None, "Start queue", False
 
     def _sync_buttons(self):
@@ -856,6 +869,9 @@ class MainWindow(QtWidgets.QMainWindow):
         job = self._selected_job()
         running = bool(job and job["id"] == s.get("job_id"))
         can_edit = bool(job) and not running
+        can_resume = (not busy and bool(job)
+                      and job.get("state") in self.RESUMABLE)
+        self.act_resume.setEnabled(can_resume)
 
         for widget, on in (
             (self.btn_start, can_start),   (self.act_start, can_start),
@@ -912,6 +928,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not enabled:
             return
         self._act(api.start, job_id)
+
+    def do_resume(self):
+        """Resume the selected stopped job, whatever the queue is doing."""
+        job = self._selected_job()
+        if job and job.get("state") in self.RESUMABLE:
+            # Same call the Start button makes: controller.start(job_id) jumps
+            # it to the front and re-queues it, which is resume-then-start.
+            self._act(api.start, job["id"])
 
     def do_stop(self):
         job = self._last.get("job") or {}
