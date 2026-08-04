@@ -104,8 +104,11 @@ class Controller:
         self.notify("started", started)
         return started
 
-    def stop(self):
-        return self.runner.stop()
+    def stop(self, after_current=False):
+        return self.runner.stop(after_current=after_current)
+
+    def cancel_stop_after(self):
+        return self.runner.cancel_stop_after()
 
     def status(self):
         st = self.runner.status()

@@ -315,7 +315,10 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
 
             if path == "/api/stop":
-                return self._json({"stopped": controller.stop()})
+                return self._json({"stopped": controller.stop(
+                    after_current=bool(body.get("after_current")))})
+            if path == "/api/cancel_stop":
+                return self._json({"cancelled": controller.cancel_stop_after()})
             if path == "/api/start":
                 job = (controller.start(body["job_id"]) if body.get("job_id")
                        else controller.start_next())

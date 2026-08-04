@@ -902,6 +902,16 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             widget.setEnabled(on)
 
+        # While waiting for the tile to land the render is still going, so the
+        # button has to say why nothing has happened yet — otherwise it reads
+        # as a Stop that was ignored, and gets pressed again.
+        waiting = bool(s.get("stopping_after_tile"))
+        unit = ((s.get("progress") or {}).get("unit") or "tiles")[:-1]
+        self.btn_stop.setText(f"Finishing {unit}…" if waiting else "Stop render")
+        self.btn_stop.setToolTip(
+            f"Waiting for the current {unit} to finish, then stopping.\n"
+            "Press again to stop immediately." if waiting else "")
+
         # Same job open_output_folder / open_blend_folder will act on, so what
         # is clickable matches what will actually work. A classic render has no
         # output_dir until it has started — it comes from the .blend — so the
@@ -964,13 +974,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self._act(api.start, job["id"])
 
     def do_stop(self):
-        job = self._last.get("job") or {}
-        if QtWidgets.QMessageBox.question(
-                self, "Stop render",
-                f"Stop “{job.get('name','this render')}”?\n\n"
-                "The tile being rendered right now is discarded and re-rendered "
-                "when you resume. Everything already finished is kept.",
-        ) == QtWidgets.QMessageBox.Yes:
+        # Already waiting for a tile to land: pressing Stop again means "do not
+        # wait after all", so it goes immediately rather than re-asking.
+        if self._last.get("stopping_after_tile"):
+            return self._act(api.stop)
+
+        s = self._last
+        job = s.get("job") or {}
+        prog = s.get("progress") or {}
+        unit = (prog.get("unit") or "tiles")[:-1]
+
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Stop render")
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        box.setText(f"Stop “{job.get('name', 'this render')}”?")
+
+        # How much is actually at stake, rather than a general warning. At 90s
+        # a tile the honest answer is "a minute and a half"; on a slow scene it
+        # can be a great deal more, and that is exactly when waiting is worth it.
+        avg = prog.get("avg_tile_s")
+        cost = (f"about {hms(avg)} of work on the current {unit}"
+                if avg else f"the {unit} being rendered right now")
+        box.setInformativeText(
+            f"Everything already finished is kept either way.\n\n"
+            f"Finish this {unit} first — waits for it to land, then stops. "
+            f"Loses nothing.\n"
+            f"Stop now — discards {cost}; it is re-rendered on resume.")
+
+        wait = box.addButton(f"Finish this {unit}", QtWidgets.QMessageBox.AcceptRole)
+        now = box.addButton("Stop now", QtWidgets.QMessageBox.DestructiveRole)
+        box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
+        box.setDefaultButton(wait)      # the option that cannot lose work
+        box.exec()
+
+        if box.clickedButton() is wait:
+            self._act(api.stop, True)
+        elif box.clickedButton() is now:
             self._act(api.stop)
 
     def do_move(self, offset):

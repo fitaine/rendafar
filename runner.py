@@ -130,6 +130,7 @@ class Runner:
         self._proc     = None
         self._job_id   = None
         self._stopping = False
+        self._stop_after = False    # waiting for the tile in flight to land
         self._started  = None
         self._buffer   = deque(maxlen=config.LOG_BUFFER_LINES)
         self._logfile  = None
@@ -162,6 +163,7 @@ class Runner:
                 live = None
             out = {
                 "busy":       busy,
+                "stopping_after_tile": self._stop_after,
                 "job_id":     self._job_id,
                 "job":        job,
                 "pid":        self._proc.pid if self._proc else None,
@@ -227,6 +229,7 @@ class Runner:
             )
             self._job_id   = job_id
             self._stopping = False
+            self._stop_after = False
             self._started  = time.time()
             self._buffer.clear()
             self._live     = None
@@ -243,21 +246,103 @@ class Runner:
 
     # ── stop ─────────────────────────────────────────────────────────────
 
-    def stop(self):
+    def stop(self, after_current=False):
         """
-        Kill the render immediately.
+        Stop the render. Immediately, or once the tile in flight has landed.
 
-        By design there is no graceful pause: the manifest is flushed after
-        every tile, so the most that is ever lost is the tile in flight, and
-        resume re-renders it via SKIP_EXISTING.
+        `after_current` costs nothing in the render script and needs no
+        cooperation from it, which matters: every job is pinned to a frozen
+        dated script, so anything requiring a script change would not work for
+        jobs already queued against an older one. Instead this watches the
+        manifest, which the script flushes right after writing each tile — when
+        the count goes up, the tile is safely on disk and the process can go.
+
+        Killing a moment later loses only the seconds spent on the NEXT tile,
+        which an immediate stop would have thrown away anyway.
+
+        Returns True if a stop was started. With after_current the kill happens
+        on a background thread, so this returns while the render is still
+        going.
         """
         with self._lock:
             if not self.is_busy():
                 return False
+            # Already waiting for a tile? Asking to wait AGAIN changes nothing
+            # and must not stack a second watcher. Asking to stop NOW, though,
+            # is a change of mind and has to get through — that is what the
+            # button does on a second press.
+            if self._stop_after and after_current:
+                return True
+            pid = self._proc.pid
+            job_id = self._job_id
+            if not after_current:
+                self._stopping = True
+                self._stop_after = False    # the watcher will see this and exit
+
+        if not after_current:
+            kill_tree(pid)
+            return True
+
+        with self._lock:
+            self._stop_after = True
+        threading.Thread(target=self._kill_after_tile, args=(job_id, pid),
+                         daemon=True).start()
+        return True
+
+    def stopping_after_tile(self):
+        """True while waiting for the tile in flight to finish."""
+        with self._lock:
+            return self._stop_after
+
+    def cancel_stop_after(self):
+        """Change your mind: carry on rendering."""
+        with self._lock:
+            if not self._stop_after:
+                return False
+            self._stop_after = False
+            return True
+
+    def _kill_after_tile(self, job_id, pid):
+        """Wait for the manifest count to tick up, then kill."""
+        job = qm.load_job(job_id)
+        start = self._done_count(job)
+        t0 = time.time()
+
+        # A tile that is already slow should not be cut short by an impatient
+        # deadline, so the budget follows the job's own measured pace. The
+        # floor covers a job with no timings yet; the ceiling means a wedged
+        # render still stops rather than waiting for ever.
+        prog = paths.progress(job) or {}
+        avg = prog.get("avg_tile_s") or 0
+        budget = min(max(avg * 3, config.STOP_AFTER_MIN_S), config.STOP_AFTER_MAX_S)
+
+        while True:
+            time.sleep(2)
+            with self._lock:
+                if not self._stop_after:
+                    return                      # cancelled
+                if self._proc is None or self._proc.poll() is not None:
+                    self._stop_after = False    # finished on its own
+                    return
+            if start is None or self._done_count(job) != start:
+                break                           # the tile landed
+            if time.time() - t0 > budget:
+                break                           # took too long; stop anyway
+
+        with self._lock:
+            if not self._stop_after or not self.is_busy():
+                self._stop_after = False
+                return
             self._stopping = True
+            self._stop_after = False
             pid = self._proc.pid
         kill_tree(pid)
-        return True
+
+    @staticmethod
+    def _done_count(job):
+        """Tiles/frames recorded in the manifest, or None if unreadable."""
+        prog = paths.progress(job)
+        return prog.get("done") if prog else None
 
     # ── internals ────────────────────────────────────────────────────────
 

@@ -111,8 +111,13 @@ def start(job_id=None):
     return _call("/api/start", {"job_id": job_id} if job_id else {})
 
 
-def stop():
-    return _call("/api/stop", {})
+def stop(after_current=False):
+    return _call("/api/stop", {"after_current": bool(after_current)})
+
+
+def cancel_stop():
+    """Change your mind about a 'stop after this tile' and carry on."""
+    return _call("/api/cancel_stop", {})
 
 
 def resume(job_id):

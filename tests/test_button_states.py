@@ -114,9 +114,10 @@ check("the same button renders differently once disabled",
 print("\n=== 4. the phone never shows a Stop it cannot mean ===")
 html = open(os.path.join(APP, "static", "index.html"), encoding="utf-8").read()
 i = html.index("function actions(s)")
-block = html[i:i + 400]
+block = html[i:html.index("\n}", i)]       # the whole function, however it grows
 check("the phone only renders Stop when busy",
-      "if (s.busy)" in block and "act('stop')" in block,
+      "s.busy" in block and "act('stop')" in block
+      and "else" in block,
       "it omits the button entirely rather than greying it, which cannot be "
       "misread either way")
 check("...and disabled buttons are dimmed by opacity, which .danger cannot "

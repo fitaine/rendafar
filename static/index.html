@@ -666,7 +666,24 @@ function queueList(jobs, runningId){
 
 function actions(s){
   const b = [];
-  if (s.busy)
+  // Does the server on the other end actually support waiting for the tile?
+  // This page is re-read on every request, so a phone can be running today's
+  // HTML against a server process started days ago and still supervising a
+  // render. An older server ignores `after_current` and kills immediately —
+  // exactly the opposite of what the button would be promising. The field is
+  // absent on old servers and false on new ones, so its presence is the probe.
+  const canWait = "stopping_after_tile" in s;
+
+  if (s.busy && s.stopping_after_tile)
+    // Still rendering. Say so, or it reads as a Stop that was ignored.
+    b.push(`<button class="danger" onclick="act('stop')">Finishing tile — stop now</button>`);
+  else if (s.busy && canWait) {
+    // Two buttons rather than a dialog: on a phone the safe option should be
+    // one tap, not a tap plus a choice.
+    b.push(`<button onclick="act('stop',null,undefined,{after_current:true})">Finish tile, then stop</button>`);
+    b.push(`<button class="danger" onclick="act('stop')">Stop now</button>`);
+  }
+  else if (s.busy)
     b.push(`<button class="danger" onclick="act('stop')">Stop render</button>`);
   else if (s.next_id)
     // "Start queue", not "Start next job": it keeps going by itself, taking
@@ -805,10 +822,11 @@ document.addEventListener("change", (e) => {
   }
 });
 
-async function act(what, jobId, offset){
+async function act(what, jobId, offset, extra){
   const body = {};
   if (jobId) body.job_id = jobId;
   if (offset !== undefined) body.offset = offset;
+  if (extra) Object.assign(body, extra);   // e.g. {after_current:true}
   const r = await fetch("/api/" + what, {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify(body)

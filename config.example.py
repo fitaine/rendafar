@@ -49,6 +49,13 @@ BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
 LOG_BUFFER_LINES = 1500     # lines of stdout kept in memory for the live view
 AUTO_START_NEXT  = True     # queue advances on its own when a job finishes
 
+# "Stop after this tile" waits for the manifest count to tick up, then kills.
+# The budget follows the job's own measured pace (avg tile x3) so a genuinely
+# slow tile is not cut short, clamped so a job with no timings yet still waits
+# a sensible while and a wedged render still stops rather than hanging on.
+STOP_AFTER_MIN_S = 120          # floor, for a job with no timings yet
+STOP_AFTER_MAX_S = 45 * 60      # ceiling, so a wedged render still stops
+
 # Preview limits. Building the thumbnail decodes the image on the machine that
 # is rendering, so past these the preview is skipped rather than stealing CPU
 # and memory from the render.
