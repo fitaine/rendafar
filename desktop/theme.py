@@ -167,6 +167,13 @@ def stylesheet():
     QPushButton#danger {{ color: #F2A19C; border-color: rgba(229,83,75,0.5); }}
     QPushButton#danger:hover:!disabled {{ background: rgba(229,83,75,0.14);
                                           border-color: {ALERT}; }}
+    /* Without this the id selector above outranks QPushButton:disabled, so a
+       disabled Stop kept its red text and red border and looked live — the
+       button was correctly greyed out in code and identical on screen, which
+       reads as "is that render still going?". #primary already had its own
+       :disabled rule; this is the one that was missing. */
+    QPushButton#danger:disabled {{ color: {FAINT}; border-color: {LINE_SOFT};
+                                   background: {PANEL}; }}
 
     QTableWidget {{
         background: {PANEL};
