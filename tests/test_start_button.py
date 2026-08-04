@@ -177,6 +177,41 @@ win._sync_buttons()
 check("nothing is resumable while a render is running",
       not win.act_resume.isEnabled())
 
+print("\n=== 4d. Queue: set it waiting, do not start it ===")
+# The verb that was missing. A stopped job is parked; start_next() only picks
+# jobs whose state is 'queued', which is why two finished renders were
+# followed by nothing.
+calls.clear()
+scenario(BOTH, selected_id="job_0001", busy=True, next_id="job_0002",
+         job_id="job_0002")
+win._sync_buttons()
+check("Queue is enabled for a stopped job EVEN WHILE rendering",
+      win.btn_queue.isEnabled() and win.act_queue.isEnabled(),
+      "lining up what runs next mid-render is the main reason it exists")
+check("...while Resume is not, since the GPU is busy",
+      not win.act_resume.isEnabled())
+
+win.do_enqueue()
+check("...and it calls enqueue, not start",
+      len(calls) == 1 and calls[0][0] == "enqueue"
+      and calls[0][1] == ("job_0001",), f"got {calls}")
+
+calls.clear()
+scenario(QUEUED, selected_id="job_0002", next_id="job_0002")
+win._sync_buttons()
+check("an already-queued job cannot be queued again",
+      not win.btn_queue.isEnabled())
+win.do_enqueue()
+check("...and triggering it does nothing", calls == [], f"got {calls}")
+
+calls.clear()
+scenario(DONE, selected_id="job_0003", next_id=None)
+win._sync_buttons()
+check("a done job cannot be queued", not win.btn_queue.isEnabled(),
+      "re-rendering hours of finished tiles is not a one-click action")
+win.do_enqueue()
+check("...and triggering it does nothing", calls == [], f"got {calls}")
+
 print("\n=== 5. guards ===")
 jid, label, on = scenario(STOPPED, selected_id="job_0001", busy=True,
                           next_id=None, job_id="job_0001")

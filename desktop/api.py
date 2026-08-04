@@ -119,6 +119,11 @@ def resume(job_id):
     return _call("/api/resume", {"job_id": job_id})
 
 
+def enqueue(job_id):
+    """Set a stopped job waiting in the queue, in place, without starting it."""
+    return _call("/api/enqueue", {"job_id": job_id})
+
+
 def move(job_id, offset):
     return _call("/api/move", {"job_id": job_id, "offset": offset})
 

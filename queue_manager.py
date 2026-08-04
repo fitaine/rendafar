@@ -183,6 +183,33 @@ def next_queued():
     return None
 
 
+def enqueue(job_id):
+    """
+    Put a stopped job back in the queue to WAIT, without starting it and
+    without changing where it sits in the order.
+
+    This is the state the queue actually runs on. start_next() only ever picks
+    a job whose state is literally `queued`, so a job left `stopped` is not
+    waiting for anything — it is parked. Two renders finished here with other
+    work sitting `stopped` behind them and nothing followed, because from the
+    queue's point of view there was nothing to follow.
+
+    Distinct from resume(), which jumps a job to the FRONT: that is right for
+    power-cut recovery, where the interrupted job should come back first, and
+    wrong here, where the whole point is that queue order decides.
+    """
+    job = load_job(job_id)
+    if job is None:
+        raise KeyError(job_id)
+    if job["state"] == RUNNING:
+        raise ValueError(f"{job_id} is already running")
+    if job["state"] == DONE:
+        raise ValueError(f"{job_id} is already done")
+    if job["state"] == QUEUED:
+        return job                      # already waiting; nothing to do
+    return set_state(job_id, QUEUED, note="queued to follow")
+
+
 def resume(job_id):
     """
     Put a stopped / failed / interrupted job back at the front of the queue.

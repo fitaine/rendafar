@@ -322,6 +322,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"started": job["id"] if job else None})
             if path == "/api/resume":
                 return self._json({"job": qm.resume(body["job_id"])})
+            if path == "/api/enqueue":
+                # Set a stopped job waiting, in place. Reachable from the phone
+                # too: lining up what runs next is exactly the kind of thing
+                # worth doing from bed while a render is going.
+                return self._json({"job": qm.enqueue(body["job_id"])})
             if path == "/api/move":
                 return self._json({"order": qm.move(body["job_id"],
                                                     int(body["offset"]))})

@@ -330,6 +330,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_resume = m.addAction("Res&ume selected")
         self.act_resume.triggered.connect(self.do_resume)
 
+        self.act_queue = m.addAction("&Queue selected")
+        self.act_queue.setShortcut("Ctrl+Q")
+        self.act_queue.setToolTip(
+            "Set it waiting; it starts when the current render finishes")
+        self.act_queue.triggered.connect(self.do_enqueue)
+
         m.addSeparator()
         self.act_up = m.addAction("Move up")
         self.act_up.setShortcut("Ctrl+Up")
@@ -617,9 +623,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_down = QtWidgets.QPushButton("↓")
         self.btn_down.setFixedWidth(36)
         self.btn_down.clicked.connect(lambda: self.do_move(1))
+        # The missing verb. A stopped job is parked, not waiting: start_next()
+        # only ever picks a job whose state is 'queued', so nothing followed
+        # the two renders that finished here. This is how you say "run this
+        # after the current one" without starting it now.
+        self.btn_queue = QtWidgets.QPushButton("Queue")
+        self.btn_queue.setToolTip(
+            "Set this render waiting, in place.\n"
+            "It starts on its own when the current render finishes.")
+        self.btn_queue.clicked.connect(self.do_enqueue)
         self.btn_remove = QtWidgets.QPushButton("Remove")
         self.btn_remove.clicked.connect(self.do_remove)
-        for b in (self.btn_up, self.btn_down):
+        for b in (self.btn_up, self.btn_down, self.btn_queue):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(self.btn_remove)
@@ -872,6 +887,11 @@ class MainWindow(QtWidgets.QMainWindow):
         can_resume = (not busy and bool(job)
                       and job.get("state") in self.RESUMABLE)
         self.act_resume.setEnabled(can_resume)
+        # Queueing does NOT need the GPU free — lining up what runs next while
+        # something is rendering is the main reason it exists.
+        can_queue = bool(job) and job.get("state") in self.RESUMABLE
+        self.btn_queue.setEnabled(can_queue)
+        self.act_queue.setEnabled(can_queue)
 
         for widget, on in (
             (self.btn_start, can_start),   (self.act_start, can_start),
@@ -928,6 +948,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if not enabled:
             return
         self._act(api.start, job_id)
+
+    def do_enqueue(self):
+        """Set the selected stopped job waiting, without starting it."""
+        job = self._selected_job()
+        if job and job.get("state") in self.RESUMABLE:
+            self._act(api.enqueue, job["id"])
 
     def do_resume(self):
         """Resume the selected stopped job, whatever the queue is doing."""

@@ -343,7 +343,7 @@ class JobsTable(QtWidgets.QTableWidget):
         stripe.setFlags(QtCore.Qt.ItemIsEnabled)
         self.setItem(row, COL["kind"], stripe)
 
-        self._cell(row, "state", job.get("state", "?"), mono=True,
+        self._cell(row, "state", theme.state_label(job.get("state")), mono=True,
                    colour=theme.STATE_COLOUR.get(job.get("state"), theme.DIM))
         self._cell(row, "name", job.get("name", ""))
 

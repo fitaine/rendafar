@@ -632,6 +632,13 @@ function gpuBlock(g){
        + (g.warning ? `<div class="warning">${g.warning}</div>` : "");
 }
 
+/* Mirrors theme.state_label() on the desktop. The stored value stays
+   "running" — it is in every job file and history entry on disk — so the
+   rename to "rendering" happens here, at the point of display. */
+function stateLabel(state){
+  return state === "running" ? "rendering" : (state || "?");
+}
+
 function queueList(jobs, runningId){
   if (!jobs.length)
     return `<div class="empty">Nothing queued.<br>Add a render on the PC with <code>NEW JOB.bat</code>.</div>`;
@@ -642,13 +649,14 @@ function queueList(jobs, runningId){
     return `<div class="job">
       <span class="kindbar ${k.cls}"></span>
       <span class="kind ${k.cls}">${k.label}</span>
-      <span class="badge ${j.state}">${j.state}</span>
+      <span class="badge ${j.state}">${stateLabel(j.state)}</span>
       <div class="job-main">
         <div class="job-name">${j.name}</div>
         <div class="job-sub">${j.output_dir || j.blend}</div>
       </div>
       <div class="job-acts">
         ${resumable ? `<button class="mini" onclick="act('start','${j.id}')">Resume</button>` : ""}
+        ${resumable ? `<button class="mini" onclick="act('enqueue','${j.id}')">Queue</button>` : ""}
         ${!running && j.state === "queued" ? `<button class="mini" onclick="act('move','${j.id}',-1)">↑</button>` : ""}
         ${!running ? `<button class="mini" onclick="removeJob('${j.id}')">Remove</button>` : ""}
       </div>

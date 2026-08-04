@@ -48,6 +48,18 @@ KIND = {
     "still":     "#86BE86",     # moss
 }
 
+# What each state is CALLED on screen. The stored value stays "running": it is
+# written into every job file and every history entry already on disk, and
+# renaming it would mean migrating all of them to change one word in a table.
+STATE_LABEL = {
+    "running": "rendering",
+}
+
+
+def state_label(state):
+    return STATE_LABEL.get(state, state or "?")
+
+
 STATE_COLOUR = {
     "running":     AMBER,
     "done":        GOOD,
