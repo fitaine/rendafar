@@ -41,12 +41,23 @@ COLUMNS = [
     ("frames",     "Frames",      74),
     ("format",     "Format",      62),
     ("filename",   "Filename",    132),
+    ("eta",        "Est.",        92),
     ("output",     "Output",      130),   # stretches to fill what is left
 ]
 COL = {key: i for i, (key, _, _) in enumerate(COLUMNS)}
 
 ROLE_JOB = QtCore.Qt.UserRole + 1
 ROLE_EDIT = QtCore.Qt.UserRole + 2      # (job_id, config key, kind, choices)
+
+
+def _mins(seconds):
+    """Seconds as something readable in a narrow column."""
+    if not seconds:
+        return "—"
+    m = int(round(seconds / 60))
+    if m < 60:
+        return f"{m} min"
+    return f"{m // 60}h {m % 60:02d}"
 
 
 def job_kind(job):
@@ -555,6 +566,35 @@ class JobsTable(QtWidgets.QTableWidget):
         else:
             self._cell(row, "filename", "—", mono=True,
                        locked_why="A tiled render names its own tiles")
+
+        # What renders of this same scene have actually taken. Measured, not
+        # predicted: Blender's own estimate is made from the first sample and
+        # was out by 2.6x on a measured test.
+        est = job.get("estimate")
+        eta = job.get("eta_s")
+        state = job.get("state")
+        if not est:
+            self._cell(row, "eta", "—", mono=True,
+                       locked_why="No finished render of this scene to go on "
+                                  "yet. The first one teaches it.")
+        else:
+            spread = (f"{_mins(est['low'])}–{_mins(est['high'])}"
+                      if est["high"] - est["low"] > 30 else _mins(est["low"]))
+            plural = "s" if est["n"] != 1 else ""
+            caveat = ("One finished render so far — treat it as a hint."
+                      if est["n"] < 2 else
+                      "Renders of one scene vary by camera, so this is a "
+                      "typical time, not a promise.")
+            tip = (f"From {est['n']} finished render{plural} of this scene: "
+                   f"{spread} each.\n\n{caveat}")
+            if state == "running":
+                # Saying "3 min left" when it is already past the estimate
+                # would be worse than saying nothing.
+                over = (job.get("_elapsed_s") or 0) > (eta or 0)
+                text = "over est." if over else _mins(eta)
+            else:
+                text = _mins(eta) if eta else "—"
+            self._cell(row, "eta", text, mono=True, locked_why=tip)
 
     @staticmethod
     def _first(*values):

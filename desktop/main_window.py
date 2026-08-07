@@ -774,6 +774,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 bits.append(f"{hms(p['avg_tile_s'])}/{p['unit'][:-1]}")
         if s.get("session_s"):
             bits.append(f"session {hms(s['session_s'])}")
+
+        # What is left in the whole queue, from what past renders of these
+        # scenes actually took. Jobs with nothing comparable behind them are
+        # counted separately rather than guessed at — a total that quietly
+        # omitted half the queue would read as a promise it cannot keep.
+        q = s.get("queue_eta")
+        if q and q.get("seconds"):
+            more = f" + {q['unknown']} unknown" if q.get("unknown") else ""
+            bits.append(f"queue ≈ {hms(q['seconds'])}{more}")
         self.meta_label.setText("   ·   ".join(bits))
 
         self.queue.set_jobs(queue)

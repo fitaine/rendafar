@@ -126,6 +126,15 @@ class Controller:
 
     def _on_finish(self, job_id, state):
         job = qm.load_job(job_id)
+
+        # Remember how long it took, whatever the outcome: a job stopped part
+        # way still rendered frames, and those timings are as good as any.
+        try:
+            import history
+            history.record(job)
+        except Exception as e:
+            print(f"  render history not updated: {e}")
+
         self.notify(state, job)
 
         if not config.AUTO_START_NEXT:

@@ -178,6 +178,23 @@ def build_status():
             j["output_dir"] = paths.job_output_dir(j)
         except Exception:
             j["output_dir"] = None
+        # What past renders of this same scene actually took. Attached per row
+        # so the table can show it without each front end reimplementing it.
+        try:
+            import history
+            j["estimate"] = history.estimate(j)
+            j["eta_s"] = history.job_eta_s(j)
+        except Exception:
+            j["estimate"] = j["eta_s"] = None
+        # How long the running one has actually been going, so the table can
+        # say "over est." rather than count down past zero.
+        if j["id"] == st.get("job_id"):
+            j["_elapsed_s"] = st.get("session_s")
+    try:
+        import history
+        st["queue_eta"] = history.queue_eta_s(st.get("queue", []))
+    except Exception:
+        st["queue_eta"] = None
     st["log"] = controller.runner.log_tail(400)
     return st
 
