@@ -129,9 +129,19 @@ def duplicate(job_id):
     return _call("/api/duplicate", {"job_id": job_id})
 
 
+def unqueue(job_id):
+    """Take a queued job back out of the queue, without losing its progress."""
+    return _call("/api/unqueue", {"job_id": job_id})
+
+
 def enqueue(job_id):
     """Set a stopped job waiting in the queue, in place, without starting it."""
     return _call("/api/enqueue", {"job_id": job_id})
+
+
+def reorder(order):
+    """Set the whole queue order — what a drag produces."""
+    return _call("/api/reorder", {"order": list(order)})
 
 
 def move(job_ids, offset):

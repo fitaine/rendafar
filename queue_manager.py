@@ -289,6 +289,26 @@ def enqueue(job_id):
     return set_state(job_id, QUEUED, note="queued to follow")
 
 
+def unqueue(job_id):
+    """
+    Take a job back OUT of the queue: queued -> stopped, in place.
+
+    The opposite of enqueue(). Stopped means parked — start_next() skips it —
+    so this is how a job that is waiting its turn is set aside without being
+    removed, and without losing anything it has already rendered.
+    """
+    job = load_job(job_id)
+    if job is None:
+        raise KeyError(job_id)
+    if job["state"] == RUNNING:
+        raise ValueError(f"{job_id} is running — stop it instead")
+    if job["state"] == DONE:
+        raise ValueError(f"{job_id} is already done")
+    if job["state"] != QUEUED:
+        return job                       # already parked; nothing to do
+    return set_state(job_id, STOPPED, note="taken out of the queue")
+
+
 def resume(job_id):
     """
     Put a stopped / failed / interrupted job back at the front of the queue.

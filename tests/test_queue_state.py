@@ -177,5 +177,36 @@ check("the stored value is untouched", qm.RUNNING == "running",
       "it is in every job file and history entry on disk; renaming it would "
       "mean migrating all of them to change one word in a table")
 
+print("\n=== 7. taking a job back out of the queue ===")
+# The reverse of enqueue, so the State cell can offer both directions. Parked,
+# not removed: everything already rendered stays and the queue passes over it.
+a, b = fresh(qm.QUEUED, qm.QUEUED)
+qm.unqueue(a["id"])
+check("a queued job can be parked again",
+      qm.load_job(a["id"])["state"] == qm.STOPPED)
+check("...and the queue moves on to the next one",
+      qm.next_queued()["id"] == b["id"])
+check("parking an already-stopped job is a no-op",
+      qm.unqueue(a["id"])["state"] == qm.STOPPED)
+
+a, = fresh(qm.RUNNING)
+try:
+    qm.unqueue(a["id"])
+    check("a running job cannot be parked", False, "no error raised")
+except ValueError:
+    check("a running job cannot be parked", True, "Stop is the verb for that")
+
+a, = fresh(qm.DONE)
+try:
+    qm.unqueue(a["id"])
+    check("a finished job cannot be parked", False, "no error raised")
+except ValueError:
+    check("a finished job cannot be parked", True)
+
+a, b = fresh(qm.QUEUED, qm.STOPPED)
+qm.unqueue(a["id"]); qm.enqueue(a["id"])
+check("out and back in returns it to the queue",
+      qm.load_job(a["id"])["state"] == qm.QUEUED)
+
 print(f"\n{'=' * 62}\n  {sum(results)}/{len(results)} passed\n{'=' * 62}")
 sys.exit(0 if all(results) else 1)

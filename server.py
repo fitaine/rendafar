@@ -340,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
                             f"rendering, or the two will overwrite each other.")
                 return self._json({"job": job, "output_dir": out,
                                    "warning": warn})
+            if path == "/api/unqueue":
+                return self._json({"job": qm.unqueue(body["job_id"])})
             if path == "/api/enqueue":
                 # Set a stopped job waiting, in place. Reachable from the phone
                 # too: lining up what runs next is exactly the kind of thing
@@ -353,6 +355,13 @@ class Handler(BaseHTTPRequestHandler):
                 ids = [i for i in ids if i]
                 return self._json({"order": qm.move_many(ids,
                                                          int(body["offset"]))})
+            if path == "/api/reorder":
+                # The complete order, from a drag. qm.reorder puts the ids it
+                # is given first and keeps anything unlisted after them, so a
+                # queue that gained a job between the drag starting and landing
+                # is appended rather than lost.
+                return self._json({"order": qm.reorder(
+                    [str(i) for i in (body.get("order") or [])])})
             if path == "/api/remove":
                 qm.remove(body["job_id"])
                 return self._json({"removed": body["job_id"]})

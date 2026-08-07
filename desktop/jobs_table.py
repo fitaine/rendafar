@@ -186,8 +186,46 @@ class CellEditor(QtWidgets.QStyledItemDelegate):
 
 class JobsTable(QtWidgets.QTableWidget):
 
+    RESUMABLE = ("stopped", "failed", "interrupted")
+
     changed = QtCore.Signal()            # something was edited; refresh
     error = QtCore.Signal(str)
+    reordered = QtCore.Signal(list)      # the queue, dragged into a new order
+
+    def dropEvent(self, event):
+        """
+        Drop the dragged rows where the indicator says, and send the whole
+        resulting order.
+
+        Qt's own InternalMove is not used: it rearranges the widget's rows
+        directly, which the next poll would immediately overwrite from the
+        server, so the rows would spring back. The order is computed here and
+        applied server-side instead, and the table redraws from the answer.
+        """
+        if event.source() is not self:
+            return super().dropEvent(event)
+
+        moving = self.selected_job_ids()
+        if not moving:
+            return event.ignore()
+
+        row = self.indexAt(event.position().toPoint()).row()
+        below = (self.dropIndicatorPosition()
+                 == QtWidgets.QAbstractItemView.BelowItem)
+        rest = [i for i in self._ids if i not in moving]
+
+        if 0 <= row < len(self._ids):
+            anchor = self._ids[row]
+            if anchor in moving:
+                return event.ignore()     # dropped onto itself: nothing to do
+            at = rest.index(anchor) + (1 if below else 0)
+        else:
+            at = len(rest)                # past the last row: send to the end
+
+        new = rest[:at] + moving + rest[at:]
+        event.acceptProposedAction()
+        if new != self._ids:
+            self.reordered.emit(new)
 
     def _tiled_grid(self, job, info):
         """
@@ -227,6 +265,18 @@ class JobsTable(QtWidgets.QTableWidget):
         # Several rows at once, so a block of renders can be moved up or down
         # together instead of one at a time.
         self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+
+        # Dragging rows reorders the queue. DragDrop rather than InternalMove:
+        # the move is applied on the server and the table redrawn from its
+        # answer, so there is one queue order rather than the widget's and the
+        # server's disagreeing until the next poll.
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QtWidgets.QAbstractItemView.DragDrop)
+        self.setDragDropOverwriteMode(False)
+        self.setDefaultDropAction(QtCore.Qt.MoveAction)
         self.setShowGrid(False)
         self.setWordWrap(False)
         self.setAlternatingRowColors(False)
@@ -250,8 +300,8 @@ class JobsTable(QtWidgets.QTableWidget):
         self.setItemDelegateForColumn(COL["kind"], KindStripe(self))
         self._editor = CellEditor(self)
         self._editor.edited.connect(self._apply_edit)
-        for key in ("scene", "camera", "frames", "format", "output", "name",
-                    "filename"):
+        for key in ("state", "scene", "camera", "frames", "format", "output",
+                    "name", "filename"):
             self.setItemDelegateForColumn(COL[key], self._editor)
 
         self.verticalHeader().setDefaultSectionSize(CellEditor.ROW_HEIGHT)
@@ -373,8 +423,20 @@ class JobsTable(QtWidgets.QTableWidget):
         stripe.setFlags(QtCore.Qt.ItemIsEnabled)
         self.setItem(row, COL["kind"], stripe)
 
-        self._cell(row, "state", theme.state_label(job.get("state")), mono=True,
-                   colour=theme.STATE_COLOUR.get(job.get("state"), theme.DIM))
+        # Double-click to move a job in or out of the queue. Only these two are
+        # offered: 'rendering' and 'done' are facts about what happened, not
+        # choices, and setting one by hand would be a lie about the job.
+        state = job.get("state")
+        can_switch = state in ("queued",) + self.RESUMABLE
+        self._cell(row, "state", theme.state_label(state), mono=True,
+                   colour=theme.STATE_COLOUR.get(state, theme.DIM),
+                   editable=can_switch, job=job, cfg_key="_STATE",
+                   kind="choice", choices=["queued", "stopped"],
+                   tip="Double-click: queued waits its turn and starts on its "
+                       "own, stopped is parked",
+                   locked_why=("A render in progress — use Stop"
+                               if state == "running" else
+                               "Already finished" if state == "done" else ""))
         self._cell(row, "name", job.get("name", ""))
 
         # A .blend can hold several scenes, each with its own cameras,
@@ -524,6 +586,21 @@ class JobsTable(QtWidgets.QTableWidget):
     # ── editing ──────────────────────────────────────────────────────────
 
     def _apply_edit(self, job_id, key, value, job_type="tiled"):
+        # State is not a setting on the job, it IS the job's place in the
+        # queue, so it goes through the queue verbs rather than /api/edit —
+        # which only accepts a queued job and would refuse a stopped one.
+        if key == "_STATE":
+            call = {"queued": api.enqueue, "stopped": api.unqueue}.get(value)
+            if not call:
+                return
+            try:
+                d = call(job_id)
+            except api.ServerDown as e:
+                return self.error.emit(str(e))
+            if d.get("error"):
+                return self.error.emit(d["error"])
+            return self.changed.emit()
+
         if key == "_FRAMES":
             changes = self._parse_frames(value)
             if changes is None:

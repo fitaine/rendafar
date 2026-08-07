@@ -334,6 +334,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_dup.setShortcut("Ctrl+D")
         self.act_dup.triggered.connect(self.do_duplicate)
 
+        self.act_unqueue = m.addAction("Take &out of the queue")
+        self.act_unqueue.setToolTip(
+            "Park it: it keeps everything rendered so far, but the queue "
+            "passes over it")
+        self.act_unqueue.triggered.connect(self.do_unqueue)
+
+        self.act_set_output = m.addAction("Change render &location…")
+        self.act_set_output.triggered.connect(self.do_set_output)
+
         self.act_queue = m.addAction("&Queue selected")
         self.act_queue.setShortcut("Ctrl+Q")
         self.act_queue.setToolTip(
@@ -615,6 +624,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue = JobsTable()
         self.queue.itemSelectionChanged.connect(self._sync_buttons)
         self.queue.changed.connect(lambda: self.poller.refresh_now())
+        self.queue.reordered.connect(self.do_reorder)
+        self.queue.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.queue.customContextMenuRequested.connect(self._queue_menu)
         self.queue.error.connect(
             lambda msg: self.statusBar().showMessage(msg, 8000))
         p.lay.addWidget(self.queue, 1)
@@ -915,6 +927,12 @@ class MainWindow(QtWidgets.QMainWindow):
         can_queue = any(j.get("state") in self.RESUMABLE for j in picked)
         self.btn_queue.setEnabled(can_queue)
         self.act_queue.setEnabled(can_queue)
+        self.act_unqueue.setEnabled(
+            any(j.get("state") == "queued" for j in picked))
+        # Only classic jobs keep their folder in OUTPUT_DIR; a tiled render's
+        # folder is its RENDER_NAME and is edited in the table.
+        self.act_set_output.setEnabled(
+            any(j.get("type") == "classic" for j in picked))
         # Duplicating is safe at any time, including mid-render: it only writes
         # a new job file. The one thing it needs is a row to copy.
         self.btn_dup.setEnabled(bool(job))
@@ -1065,6 +1083,75 @@ class MainWindow(QtWidgets.QMainWindow):
             self._act(api.stop, True)
         elif box.clickedButton() is now:
             self._act(api.stop)
+
+    def _queue_menu(self, pos):
+        """
+        Right-click on the queue: the same things the buttons do.
+
+        The existing QActions are reused rather than copied, so an entry here
+        is enabled or greyed for exactly the reasons the button is, and can
+        never drift from it.
+        """
+        row = self.queue.indexAt(pos)
+        # Right-clicking outside the current selection moves to that row first,
+        # the way every list does — otherwise the menu would act on something
+        # other than what was clicked.
+        if row.isValid():
+            ids = self.queue.selected_job_ids()
+            clicked = self.queue._ids[row.row()] \
+                if row.row() < len(self.queue._ids) else None
+            if clicked and clicked not in ids:
+                self.queue.selectRow(row.row())
+        self._sync_buttons()
+
+        m = QtWidgets.QMenu(self)
+        m.addAction(self.act_start)
+        m.addAction(self.act_resume)
+        m.addAction(self.act_queue)
+        m.addAction(self.act_unqueue)
+        m.addSeparator()
+        m.addAction(self.act_up)
+        m.addAction(self.act_down)
+        m.addSeparator()
+        m.addAction(self.act_dup)
+        m.addAction(self.act_set_output)
+        m.addAction(self.act_open_out_dir)
+        m.addAction(self.act_open_blend_dir)
+        m.addSeparator()
+        m.addAction(self.act_remove)
+        m.exec(self.queue.viewport().mapToGlobal(pos))
+
+    def do_unqueue(self):
+        """Take the selected jobs back out of the queue, keeping their work."""
+        for job in self._selected_jobs():
+            if job.get("state") == "queued":
+                self._act(api.unqueue, job["id"])
+
+    def do_set_output(self):
+        """Point the selected jobs at a different folder, in one go."""
+        jobs = self._selected_jobs()
+        if not jobs:
+            return
+        start = ""
+        for j in jobs:
+            base = (j.get("config") or {}).get("OUTPUT_DIR") or ""
+            folder, _name = paths.split_classic_output(base)
+            if folder and os.path.isdir(folder):
+                start = folder
+                break
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Where should these renders write?",
+            start or os.path.expanduser("~"))
+        if not folder:
+            return
+        # Sent through the ordinary edit path, so each job keeps its own
+        # filename and the server's uniqueness check still applies.
+        for j in jobs:
+            self._act(api.edit_job, j["id"], {"_OUTPUT": folder})
+
+    def do_reorder(self, order):
+        """A drag landed: apply the new queue order."""
+        self._act(api.reorder, order)
 
     def do_move(self, offset):
         # The whole selection, in one call. Moving rows one at a time makes

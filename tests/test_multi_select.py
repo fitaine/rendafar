@@ -129,5 +129,66 @@ check("Remove acts on the selection too",
 check("...and says how many it is about to remove",
       "these {len(ids)} jobs" in inspect.getsource(mw.MainWindow.do_remove))
 
+print("\n=== 7. dragging rows to a new position ===")
+from PySide6 import QtGui                                # noqa: E402
+
+t2 = JobsTable()
+t2.resize(900, 400)
+t2.set_jobs([{"id": c, "name": c, "type": "classic", "state": "queued",
+              "blend": "x.blend", "script": "s", "config": {"MODE": "still"}}
+             for c in "ABCDE"])
+t2.show()
+app.processEvents()
+seen = []
+t2.reordered.connect(lambda o: seen.append("".join(o)))
+
+
+def drop(rows, on_row, below):
+    seen.clear()
+    t2.clearSelection()
+    for r in rows:
+        t2.selectionModel().select(
+            t2.model().index(r, 0),
+            QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows)
+    app.processEvents()
+    if 0 <= on_row < t2.rowCount():
+        pt = t2.visualRect(t2.model().index(on_row, 0)).center()
+    else:
+        pt = QtCore.QPoint(4, t2.viewport().height() - 2)
+    t2.dropIndicatorPosition = lambda: (
+        QtWidgets.QAbstractItemView.BelowItem if below
+        else QtWidgets.QAbstractItemView.AboveItem)
+    ev = QtGui.QDropEvent(QtCore.QPointF(pt), QtCore.Qt.MoveAction,
+                          QtCore.QMimeData(), QtCore.Qt.LeftButton,
+                          QtCore.Qt.NoModifier)
+    ev.source = lambda: t2
+    t2.dropEvent(ev)
+    return seen[0] if seen else "(no change)"
+
+
+check("the table accepts drags", t2.dragDropMode() ==
+      QtWidgets.QAbstractItemView.DragDrop, t2.dragDropMode().name)
+check("dropping ABOVE a row lands before it",
+      drop([0], 3, False) == "BCADE", drop([0], 3, False))
+check("dropping BELOW a row lands after it",
+      drop([0], 3, True) == "BCDAE", drop([0], 3, True))
+check("a row can be dragged to the very top",
+      drop([4], 0, False) == "EABCD", drop([4], 0, False))
+check("...and past the last row, to the end",
+      drop([2], 99, True) == "ABDEC", drop([2], 99, True))
+check("several rows drag together, keeping their order",
+      drop([1, 2], 4, True) == "ADEBC", drop([1, 2], 4, True))
+check("...including from the bottom to the top",
+      drop([3, 4], 0, False) == "DEABC", drop([3, 4], 0, False))
+check("dropping a row onto itself changes nothing",
+      drop([1], 1, False) == "(no change)", drop([1], 1, False))
+
+import inspect as _i                                     # noqa: E402
+src = _i.getsource(mw.MainWindow.do_reorder)
+check("the drag is applied server-side, not just in the widget",
+      "api.reorder" in src,
+      "Qt's InternalMove rearranges the widget only, and the next poll would "
+      "redraw from the server and spring the rows back")
+
 print(f"\n{'=' * 62}\n  {sum(results)}/{len(results)} passed\n{'=' * 62}")
 sys.exit(0 if all(results) else 1)
