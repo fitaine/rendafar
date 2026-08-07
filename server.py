@@ -540,6 +540,16 @@ class Handler(BaseHTTPRequestHandler):
                     cfg["FRAME_START"] = int(body["frame_start"])
                 if body.get("frame_end"):
                     cfg["FRAME_END"] = int(body["frame_end"])
+            # Which scene and camera, chosen at creation. This is what lets the
+            # New render dialog queue several cameras of one .blend in one go
+            # instead of adding it once and duplicating it by hand.
+            if body.get("camera"):
+                cfg["CAMERA"] = str(body["camera"])
+            if body.get("output_dir"):
+                cfg["OUTPUT_DIR"] = str(body["output_dir"])
+
+        if body.get("scene"):
+            cfg["SCENE"] = str(body["scene"])
 
         job = qm.create_job(blend, name=(body.get("name") or None),
                             job_type=job_type, cfg=cfg)

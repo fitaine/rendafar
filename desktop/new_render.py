@@ -11,6 +11,7 @@ renders touch nothing.
 """
 
 import os
+import re
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -270,7 +271,100 @@ class NewRenderDialog(QtWidgets.QDialog):
         self.frame = self._spin(0, 1000000,
                                 special="the scene's current frame")
         f.addRow("Frame", self.frame)
+
+        # Tick the cameras wanted and get one job each, rather than adding the
+        # file once and then duplicating it and changing the camera by hand.
+        # Scenes are the top level because a camera only means anything inside
+        # its own scene.
+        self.cams = QtWidgets.QTreeWidget()
+        self.cams.setHeaderHidden(True)
+        self.cams.setRootIsDecorated(True)
+        self.cams.setMinimumHeight(150)
+        self.cams.setToolTip("One job per ticked camera")
+        self.cams.itemChanged.connect(self._cams_changed)
+        f.addRow("Cameras", self.cams)
+
+        self.cams_note = self._label("")
+        f.addRow("", self.cams_note)
         return w
+
+    # ── the camera picker ────────────────────────────────────────────────
+
+    def _load_cameras(self):
+        """Fill the tree from the .blend, off the UI thread."""
+        blend = self.blend_edit.text().strip().strip('"')
+        if self.kind() != "still" or not os.path.isfile(blend):
+            return
+        self.cams.clear()
+        self.cams_note.setText("reading the .blend…")
+
+        class Probe(QtCore.QThread):
+            done = QtCore.Signal(dict)
+
+            def run(self):
+                try:
+                    self.done.emit(api.blend_info(blend))
+                except Exception as e:
+                    self.done.emit({"error": str(e)})
+
+        p = Probe(self)
+        p.done.connect(self._cameras_ready)
+        p.finished.connect(p.deleteLater)
+        self._jobs.append(p)
+        p.start()
+
+    @QtCore.Slot(dict)
+    def _cameras_ready(self, info):
+        if info.get("error"):
+            self.cams_note.setText(info["error"])
+            return
+        self._info = info
+        scenes = info.get("scenes") or [info]
+        active = info.get("active_scene") or info.get("scene")
+
+        self.cams.blockSignals(True)
+        self.cams.clear()
+        for s in scenes:
+            top = QtWidgets.QTreeWidgetItem(self.cams, [s.get("scene", "?")])
+            top.setFlags(QtCore.Qt.ItemIsEnabled)
+            top.setExpanded(True)
+            for cam in s.get("cameras") or []:
+                it = QtWidgets.QTreeWidgetItem(top, [cam])
+                it.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+                # Pre-tick only what a single Add would have rendered anyway:
+                # the active scene's own camera. Everything else is a decision.
+                on = (s.get("scene") == active and cam == s.get("camera"))
+                it.setCheckState(0, QtCore.Qt.Checked if on
+                                 else QtCore.Qt.Unchecked)
+                it.setData(0, QtCore.Qt.UserRole, (s.get("scene"), cam))
+        self.cams.blockSignals(False)
+        self._cams_changed()
+
+    def selected_cameras(self):
+        """[(scene, camera)] for every ticked camera, in tree order."""
+        out = []
+        for i in range(self.cams.topLevelItemCount()):
+            top = self.cams.topLevelItem(i)
+            for j in range(top.childCount()):
+                c = top.child(j)
+                if c.checkState(0) == QtCore.Qt.Checked:
+                    out.append(c.data(0, QtCore.Qt.UserRole))
+        return out
+
+    def _cams_changed(self, *_):
+        picked = self.selected_cameras()
+        n = len(picked)
+        if n == 0:
+            self.cams_note.setText("Tick at least one camera.")
+        elif n == 1:
+            self.cams_note.setText(
+                "1 job — output as the .blend has it.")
+        else:
+            self.cams_note.setText(
+                f"{n} jobs, one per camera.\n"
+                f"Each writes with its camera's name in the filename, so they "
+                f"cannot overwrite each other.")
+        self._validate()
 
     # ── picking a file ───────────────────────────────────────────────────
 
@@ -285,6 +379,7 @@ class NewRenderDialog(QtWidgets.QDialog):
                 if b.isChecked() else "")
         self._validate()
         self._grid_timer.start()
+        self._load_cameras()
 
     def kind(self):
         """The chosen type, or None while nothing has been picked."""
@@ -330,8 +425,13 @@ class NewRenderDialog(QtWidgets.QDialog):
         p = self.blend_edit.text().strip().strip('"')
         has_file = p.lower().endswith(".blend") and os.path.isfile(p)
         # Both a file AND a type: the type is never assumed.
-        self.ok.setEnabled(has_file and self.kind() is not None)
-        self.ok.setToolTip("" if self.kind() else "Choose a type first")
+        ok = has_file and self.kind() is not None
+        why = "" if self.kind() else "Choose a type first"
+        if ok and self.kind() == "still" and self.cams.topLevelItemCount():
+            if not self.selected_cameras():
+                ok, why = False, "Tick at least one camera"
+        self.ok.setEnabled(ok)
+        self.ok.setToolTip(why)
         if p and not has_file:
             self.blend_edit.setToolTip("No .blend file at that path")
         else:
@@ -362,9 +462,85 @@ class NewRenderDialog(QtWidgets.QDialog):
         else:
             if self.frame.value():
                 body["frame"] = self.frame.value()
+            # One ticked camera still goes through here; the tick has to count,
+            # or picking a camera and pressing Add would silently render the
+            # scene's default one.
+            picked = self.selected_cameras()
+            if len(picked) == 1:
+                scene, cam = picked[0]
+                body["scene"], body["camera"] = scene, cam
         return body
 
+    @staticmethod
+    def _camera_output(scene_info, camera):
+        """
+        Where one camera's still should write, given the scene's own setting.
+
+        Several cameras of one scene otherwise render the same frame number to
+        the same path and quietly overwrite each other — the last one wins and
+        the rest of the work is gone.
+
+        The camera's name becomes part of the FILENAME rather than a new folder:
+        to Blender a path with no trailing separator is a filename prefix, which
+        keeps everything where the .blend already points instead of inventing a
+        folder structure the .blend knows nothing about.
+        """
+        base = (scene_info or {}).get("filepath") or ""
+        if not base:
+            return ""                       # unknown: leave the .blend in charge
+        safe = re.sub(r"[^\w.-]+", "_", camera).strip("_") or "cam"
+        if base.endswith(("/", "\\")):
+            return f"{base}{safe}_"
+        return f"{base.rstrip('_-')}_{safe}_"
+
+    def _create_many(self, picked):
+        """One job per ticked camera. Stops at the first failure and says so."""
+        blend = self.blend_edit.text().strip().strip('"')
+        stem = self.name_edit.text().strip() or \
+            os.path.basename(blend).replace(".blend", "")
+        scenes = {s.get("scene"): s
+                  for s in (getattr(self, "_info", {}) or {}).get("scenes") or []}
+        multi_scene = len({s for s, _ in picked}) > 1
+
+        made, failed = [], None
+        for scene, cam in picked:
+            body = {"blend": blend, "kind": "still",
+                    "name": f"{stem} · {scene}/{cam}" if multi_scene
+                            else f"{stem} · {cam}",
+                    "scene": scene, "camera": cam,
+                    "output_dir": self._camera_output(scenes.get(scene), cam)}
+            if self.frame.value():
+                body["frame"] = self.frame.value()
+            try:
+                d = api.new_job(body)
+            except api.ServerDown as e:
+                failed = str(e)
+                break
+            if d.get("error"):
+                failed = d["error"]
+                break
+            made.append(d["job"]["name"])
+
+        if failed:
+            QtWidgets.QMessageBox.warning(
+                self, "Rendafar",
+                f"{len(made)} of {len(picked)} added, then this stopped it:\n\n"
+                f"{failed}")
+            if made:
+                self.accept()
+            return
+        QtWidgets.QMessageBox.information(
+            self, "Added", f"{len(made)} jobs queued:\n\n" + "\n".join(made))
+        self.accept()
+
     def create(self):
+        # Several cameras is a different action from adding one file, so it
+        # goes its own way rather than being squeezed into one payload.
+        if self.kind() == "still":
+            picked = self.selected_cameras()
+            if len(picked) > 1:
+                return self._create_many(picked)
+
         try:
             d = api.new_job(self.payload())
         except api.ServerDown as e:
