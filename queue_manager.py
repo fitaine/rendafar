@@ -326,6 +326,48 @@ def move(job_id, offset):
     return order
 
 
+def move_many(job_ids, offset):
+    """
+    Move several jobs one step up (-1) or down (+1), together.
+
+    Not a loop over move(): moving each in turn makes them leapfrog each other
+    and scrambles their order. Rows are taken in the direction of travel — top
+    first going up, bottom first going down — and one that has nowhere to go
+    blocks the next, so a selection stacks against the end of the queue instead
+    of collapsing into it.
+
+    The relative order of the moved rows is always preserved, which is the
+    whole reason for selecting several at once.
+    """
+    st = load_state()
+    order = list(st["order"])
+    picked = [i for i in job_ids if i in order]
+    if not picked or offset == 0:
+        return order
+
+    idx = sorted(order.index(i) for i in picked)
+    if offset < 0:
+        blocked = -1                    # the last index that cannot move up
+        for pos in idx:                 # top first
+            if pos - 1 <= blocked:
+                blocked = pos           # sitting against the top, or a stuck row
+                continue
+            order[pos - 1], order[pos] = order[pos], order[pos - 1]
+            blocked = pos - 1
+    else:
+        blocked = len(order)            # the first index that cannot move down
+        for pos in reversed(idx):       # bottom first
+            if pos + 1 >= blocked:
+                blocked = pos
+                continue
+            order[pos + 1], order[pos] = order[pos], order[pos + 1]
+            blocked = pos + 1
+
+    st["order"] = order
+    save_state(st)
+    return order
+
+
 def reorder(ids):
     """Set the full queue order (ids not listed keep their relative order)."""
     st = load_state()

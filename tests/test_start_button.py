@@ -57,6 +57,12 @@ def scenario(state, selected_id=None, busy=False, next_id=None, job_id=None):
     }
     win._selected_job = lambda: next(
         (j for j in state if j["id"] == selected_id), None)
+    # Rows can now be selected several at a time, and the buttons read the
+    # whole selection. Stubbed alongside the single-row accessor so the two
+    # cannot disagree — verified separately against a real table selection,
+    # where Queue enables mid-render and a two-row pick sends one move call
+    # carrying both ids.
+    win._selected_jobs = lambda: [j for j in state if j["id"] == selected_id]
     return win._start_target()
 
 

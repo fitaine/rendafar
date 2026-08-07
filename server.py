@@ -346,8 +346,13 @@ class Handler(BaseHTTPRequestHandler):
                 # worth doing from bed while a render is going.
                 return self._json({"job": qm.enqueue(body["job_id"])})
             if path == "/api/move":
-                return self._json({"order": qm.move(body["job_id"],
-                                                    int(body["offset"]))})
+                # One call for the whole selection: moving rows one at a time
+                # makes them leapfrog, and a half-applied reorder is worse than
+                # none.
+                ids = body.get("job_ids") or [body.get("job_id")]
+                ids = [i for i in ids if i]
+                return self._json({"order": qm.move_many(ids,
+                                                         int(body["offset"]))})
             if path == "/api/remove":
                 qm.remove(body["job_id"])
                 return self._json({"removed": body["job_id"]})

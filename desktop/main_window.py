@@ -836,6 +836,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return next((j for j in (self._last.get("queue") or [])
                      if j["id"] == jid), None)
 
+    def _selected_jobs(self):
+        """Every selected job. The single-row case is just a list of one."""
+        ids = set(self.queue.selected_job_ids())
+        return [j for j in (self._last.get("queue") or []) if j["id"] in ids]
+
     RESUMABLE = ("stopped", "failed", "interrupted")
 
     def _start_target(self):
@@ -896,20 +901,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_start.setText("&" + start_label)
 
         job = self._selected_job()
+        # Rows can be selected several at a time, so what a button does applies
+        # to the whole selection — and it is enabled when ANY of them can take
+        # it, rather than being greyed out because one row in the block cannot.
+        picked = self._selected_jobs()
         running = bool(job and job["id"] == s.get("job_id"))
-        can_edit = bool(job) and not running
+        can_edit = bool(picked) and not running
         can_resume = (not busy and bool(job)
                       and job.get("state") in self.RESUMABLE)
         self.act_resume.setEnabled(can_resume)
         # Queueing does NOT need the GPU free — lining up what runs next while
         # something is rendering is the main reason it exists.
-        can_queue = bool(job) and job.get("state") in self.RESUMABLE
+        can_queue = any(j.get("state") in self.RESUMABLE for j in picked)
         self.btn_queue.setEnabled(can_queue)
         self.act_queue.setEnabled(can_queue)
         # Duplicating is safe at any time, including mid-render: it only writes
         # a new job file. The one thing it needs is a row to copy.
         self.btn_dup.setEnabled(bool(job))
         self.act_dup.setEnabled(bool(job))
+
+        # Say how many, so a selection made and then half-forgotten cannot end
+        # in removing more than intended.
+        n = len(picked)
+        self.btn_remove.setText("Remove" if n < 2 else f"Remove {n}")
+        for b, tip in ((self.btn_up, "up"), (self.btn_down, "down")):
+            b.setToolTip(f"Move the {n} selected jobs {tip}" if n > 1
+                         else f"Move this job {tip} the queue")
 
         for widget, on in (
             (self.btn_start, can_start),   (self.act_start, can_start),
@@ -997,10 +1014,10 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(150, lambda: self.queue.select_job(new_id))
 
     def do_enqueue(self):
-        """Set the selected stopped job waiting, without starting it."""
-        job = self._selected_job()
-        if job and job.get("state") in self.RESUMABLE:
-            self._act(api.enqueue, job["id"])
+        """Set the selected stopped jobs waiting, without starting them."""
+        for job in self._selected_jobs():
+            if job.get("state") in self.RESUMABLE:
+                self._act(api.enqueue, job["id"])
 
     def do_resume(self):
         """Resume the selected stopped job, whatever the queue is doing."""
@@ -1050,19 +1067,25 @@ class MainWindow(QtWidgets.QMainWindow):
             self._act(api.stop)
 
     def do_move(self, offset):
-        jid = self.queue.selected_job_id()
-        if jid:
-            self._act(api.move, jid, offset)
+        # The whole selection, in one call. Moving rows one at a time makes
+        # them leapfrog each other and scrambles the order that was the reason
+        # for selecting them together.
+        ids = self.queue.selected_job_ids()
+        if ids:
+            self._act(api.move, ids, offset)
 
     def do_remove(self):
-        jid = self.queue.selected_job_id()
-        if not jid:
+        ids = self.queue.selected_job_ids()
+        if not ids:
             return
+        what = "this job" if len(ids) == 1 else f"these {len(ids)} jobs"
         if QtWidgets.QMessageBox.question(
                 self, "Remove from queue",
-                "Remove this job from the queue?\n\n"
+                f"Remove {what} from the queue?\n\n"
                 "Rendered tiles stay on disk — only the job is removed.",
-        ) == QtWidgets.QMessageBox.Yes:
+        ) != QtWidgets.QMessageBox.Yes:
+            return
+        for jid in ids:
             self._act(api.remove, jid)
 
     def warn(self, text, detail=""):

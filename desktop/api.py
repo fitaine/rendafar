@@ -134,8 +134,11 @@ def enqueue(job_id):
     return _call("/api/enqueue", {"job_id": job_id})
 
 
-def move(job_id, offset):
-    return _call("/api/move", {"job_id": job_id, "offset": offset})
+def move(job_ids, offset):
+    """Move one job or a whole selection. Accepts an id or a list of them."""
+    if isinstance(job_ids, str):
+        job_ids = [job_ids]
+    return _call("/api/move", {"job_ids": list(job_ids), "offset": offset})
 
 
 def remove(job_id):

@@ -224,7 +224,9 @@ class JobsTable(QtWidgets.QTableWidget):
         self.setHorizontalHeaderLabels([c[1] for c in COLUMNS])
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        # Several rows at once, so a block of renders can be moved up or down
+        # together instead of one at a time.
+        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.setShowGrid(False)
         self.setWordWrap(False)
         self.setAlternatingRowColors(False)
@@ -292,6 +294,11 @@ class JobsTable(QtWidgets.QTableWidget):
     def selected_job_id(self):
         r = self.currentRow()
         return self._ids[r] if 0 <= r < len(self._ids) else None
+
+    def selected_job_ids(self):
+        """Every selected job, in the order they appear in the queue."""
+        rows = sorted(i.row() for i in self.selectionModel().selectedRows())
+        return [self._ids[r] for r in rows if 0 <= r < len(self._ids)]
 
     def select_job(self, job_id):
         """Put the cursor on a job by id. False if it is not in the table yet."""
