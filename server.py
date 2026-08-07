@@ -325,6 +325,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"started": job["id"] if job else None})
             if path == "/api/resume":
                 return self._json({"job": qm.resume(body["job_id"])})
+            if path == "/api/duplicate":
+                job = qm.duplicate(body["job_id"])
+                out = paths.job_output_dir(job)
+                src_out = paths.job_output_dir(qm.load_job(body["job_id"]))
+                warn = None
+                if out and src_out and os.path.normcase(out) == os.path.normcase(src_out):
+                    # Classic renders take their output path from the .blend,
+                    # so a copy cannot be given its own folder automatically the
+                    # way a tiled one can via RENDER_NAME. Said plainly rather
+                    # than discovered when two cameras overwrite each other.
+                    warn = (f"This copy writes to the same folder as the "
+                            f"original:\n{out}\n\nChange its Output before "
+                            f"rendering, or the two will overwrite each other.")
+                return self._json({"job": job, "output_dir": out,
+                                   "warning": warn})
             if path == "/api/enqueue":
                 # Set a stopped job waiting, in place. Reachable from the phone
                 # too: lining up what runs next is exactly the kind of thing

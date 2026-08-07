@@ -124,6 +124,11 @@ def resume(job_id):
     return _call("/api/resume", {"job_id": job_id})
 
 
+def duplicate(job_id):
+    """Copy a job, queued, directly below the original."""
+    return _call("/api/duplicate", {"job_id": job_id})
+
+
 def enqueue(job_id):
     """Set a stopped job waiting in the queue, in place, without starting it."""
     return _call("/api/enqueue", {"job_id": job_id})

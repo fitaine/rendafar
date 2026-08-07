@@ -330,6 +330,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_resume = m.addAction("Res&ume selected")
         self.act_resume.triggered.connect(self.do_resume)
 
+        self.act_dup = m.addAction("&Duplicate selected")
+        self.act_dup.setShortcut("Ctrl+D")
+        self.act_dup.triggered.connect(self.do_duplicate)
+
         self.act_queue = m.addAction("&Queue selected")
         self.act_queue.setShortcut("Ctrl+Q")
         self.act_queue.setToolTip(
@@ -627,6 +631,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # only ever picks a job whose state is 'queued', so nothing followed
         # the two renders that finished here. This is how you say "run this
         # after the current one" without starting it now.
+        self.btn_dup = QtWidgets.QPushButton("Duplicate")
+        self.btn_dup.setToolTip(
+            "Copy this job, queued, just below it.\n"
+            "For rendering the same scene with a different camera without "
+            "picking the .blend again.")
+        self.btn_dup.clicked.connect(self.do_duplicate)
         self.btn_queue = QtWidgets.QPushButton("Queue")
         self.btn_queue.setToolTip(
             "Set this render waiting, in place.\n"
@@ -634,7 +644,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_queue.clicked.connect(self.do_enqueue)
         self.btn_remove = QtWidgets.QPushButton("Remove")
         self.btn_remove.clicked.connect(self.do_remove)
-        for b in (self.btn_up, self.btn_down, self.btn_queue):
+        for b in (self.btn_up, self.btn_down, self.btn_queue, self.btn_dup):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(self.btn_remove)
@@ -859,13 +869,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if s.get("next_id"):
             return None, "Start queue", True
 
-        # Nothing is queued. A stopped job is NOT in the queue — next_queued()
-        # skips it — so the arrows cannot reach it and this is the only way to
-        # start one. Without this branch a stopped render would be unstartable
-        # from the button entirely.
-        job = self._selected_job()
-        if job and job.get("state") in self.RESUMABLE:
-            return job["id"], "Resume render", True
+        # Nothing is queued, but a stopped job is still work waiting to be
+        # picked up — start_next() just does not see it. Requiring a selection
+        # first meant the button sat greyed out with an obviously resumable
+        # render on screen, and "start" became a two-step hunt.
+        #
+        # So fall back to the FIRST resumable job in queue order. Still queue
+        # order deciding, not the selection: pressing Start does the same thing
+        # whatever row happens to be highlighted.
+        for j in s.get("queue") or []:
+            if j.get("state") in self.RESUMABLE:
+                return j["id"], "Resume render", True
         # 'done' deliberately falls through. Restarting a finished job would
         # re-render tiles that already cost hours, so it is not something a
         # single unconfirmed click should be able to do.
@@ -892,6 +906,10 @@ class MainWindow(QtWidgets.QMainWindow):
         can_queue = bool(job) and job.get("state") in self.RESUMABLE
         self.btn_queue.setEnabled(can_queue)
         self.act_queue.setEnabled(can_queue)
+        # Duplicating is safe at any time, including mid-render: it only writes
+        # a new job file. The one thing it needs is a row to copy.
+        self.btn_dup.setEnabled(bool(job))
+        self.act_dup.setEnabled(bool(job))
 
         for widget, on in (
             (self.btn_start, can_start),   (self.act_start, can_start),
@@ -958,6 +976,25 @@ class MainWindow(QtWidgets.QMainWindow):
         if not enabled:
             return
         self._act(api.start, job_id)
+
+    def do_duplicate(self):
+        job = self._selected_job()
+        if not job:
+            return
+        try:
+            d = api.duplicate(job["id"])
+        except api.ServerDown as e:
+            return self.warn("Rendafar server is not responding.", str(e))
+        if d.get("error"):
+            return self.warn(d["error"])
+        if d.get("warning"):
+            self.warn("Copy created, but check its Output", d["warning"])
+        self.poller.refresh_now()
+        # Land on the copy, since the next thing is always to change something
+        # on it — the camera, usually.
+        new_id = (d.get("job") or {}).get("id")
+        if new_id:
+            QtCore.QTimer.singleShot(150, lambda: self.queue.select_job(new_id))
 
     def do_enqueue(self):
         """Set the selected stopped job waiting, without starting it."""

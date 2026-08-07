@@ -277,6 +277,13 @@ class JobsTable(QtWidgets.QTableWidget):
         r = self.currentRow()
         return self._ids[r] if 0 <= r < len(self._ids) else None
 
+    def select_job(self, job_id):
+        """Put the cursor on a job by id. False if it is not in the table yet."""
+        if job_id not in self._ids:
+            return False
+        self.selectRow(self._ids.index(job_id))
+        return True
+
     def set_jobs(self, jobs):
         # Never rebuild while a cell is open for editing. The poller refreshes
         # every two seconds, and recreating the items underneath an editor

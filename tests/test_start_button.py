@@ -66,10 +66,10 @@ DONE = [{"id": "job_0003", "name": "Finished", "state": "done"}]
 
 print("\n=== 1. the dead end that started this ===")
 jid, label, on = scenario(STOPPED, selected_id=None, next_id=None)
-check("nothing selected, one stopped job: Start is still disabled",
-      not on,
-      "unchanged — but it is no longer a dead end, because the header now "
-      "says a render is stopped instead of 'No renders queued'")
+check("nothing selected, one stopped job: Start just works",
+      on and jid == "job_0001",
+      "this used to be disabled until a row was selected, which made the "
+      "commonest action in the app a two-step hunt ending at a dead button")
 
 jid, label, on = scenario(STOPPED, selected_id="job_0001", next_id=None)
 check("selecting the stopped job enables Start", on)
@@ -95,12 +95,13 @@ check("resume() is not called at all any more",
 
 print("\n=== 3. a disabled button does nothing when triggered ===")
 calls.clear()
-scenario(STOPPED, selected_id=None, next_id=None)
+# A finished job is the disabled case now that a stopped one starts on its own.
+scenario(DONE, selected_id="job_0003", next_id=None)
 win.do_start()
 check("do_start() on a disabled state is a no-op",
       calls == [],
-      "the menu action shares this code path, and shortcuts can fire it "
-      "even while the button is greyed")
+      "the menu action shares this code path, and Ctrl+R can fire it even "
+      "while the button is greyed")
 
 print("\n=== 4. plain queue behaviour is unchanged ===")
 calls.clear()
@@ -211,6 +212,38 @@ check("a done job cannot be queued", not win.btn_queue.isEnabled(),
       "re-rendering hours of finished tiles is not a one-click action")
 win.do_enqueue()
 check("...and triggering it does nothing", calls == [], f"got {calls}")
+
+print("\n=== 4e. one click, no selection ===")
+# Start used to need a row selected before it would touch a stopped job, so it
+# sat greyed out with an obviously resumable render on screen and "start"
+# became a two-step hunt.
+calls.clear()
+jid, label, on = scenario(STOPPED, selected_id=None, next_id=None)
+check("a stopped job with NOTHING selected enables Start", on,
+      "this is the one-click case")
+check("...targeting it without being asked", jid == "job_0001", f"got {jid!r}")
+win.do_start()
+check("...and one press starts it",
+      calls == [("start", ("job_0001",))], f"got {calls}")
+
+# Queue order still decides which one, not the selection.
+TWO = [{"id": "job_0001", "name": "first",  "state": "stopped"},
+       {"id": "job_0002", "name": "second", "state": "stopped"}]
+jid, label, on = scenario(TWO, selected_id="job_0002", next_id=None)
+check("with two stopped jobs it takes the FIRST in queue order",
+      jid == "job_0001",
+      f"selecting the second must not re-point it.  got {jid!r}")
+
+# A genuinely queued job still outranks a stopped one.
+MIX = [{"id": "job_0001", "name": "stopped one", "state": "stopped"},
+       {"id": "job_0002", "name": "queued one",  "state": "queued"}]
+jid, label, on = scenario(MIX, selected_id=None, next_id="job_0002")
+check("a queued job still wins over a stopped one",
+      jid is None and label == "Start queue", f"got {jid!r} {label!r}")
+
+jid, label, on = scenario(DONE, selected_id=None, next_id=None)
+check("a done job does not make Start light up", not on,
+      "re-rendering hours of finished tiles is not a one-click action")
 
 print("\n=== 5. guards ===")
 jid, label, on = scenario(STOPPED, selected_id="job_0001", busy=True,
