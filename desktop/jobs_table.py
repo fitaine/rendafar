@@ -1,7 +1,12 @@
 """
 The Jobs table: the queue and the .blend's settings in one place.
 
-Columns:  ▍ · State · Name · Camera · Resolution · Samples · Frames · Format · Output
+Columns:  ▍ · State · Name · Scene · Camera · Resolution · Samples · Frames ·
+          Format · Output
+
+A .blend can hold several scenes, each with its own cameras, resolution, frame
+range and output path. Everything from Camera rightwards describes the SELECTED
+scene, not whichever one happened to be active when the file was saved.
 
 They can be dragged into whatever order suits. The .blend columns fill in per
 row as each file is probed, which is cached, so it costs a few seconds once per
@@ -25,6 +30,7 @@ COLUMNS = [
     ("kind",       "",            8),
     ("state",      "State",       70),
     ("name",       "Name",        170),
+    ("scene",      "Scene",       104),
     ("camera",     "Camera",      118),
     # Wide enough for a tiled render's assembled size: "120000×120000" is 13
     # mono characters, where a classic render's "4000×4000" is 9.
@@ -354,9 +360,29 @@ class JobsTable(QtWidgets.QTableWidget):
                    colour=theme.STATE_COLOUR.get(job.get("state"), theme.DIM))
         self._cell(row, "name", job.get("name", ""))
 
+        # A .blend can hold several scenes, each with its own cameras,
+        # resolution, frame range and output path. Every setting shown to the
+        # right of this column belongs to the SELECTED scene, not to whichever
+        # one happened to be active when the file was saved.
+        scenes = info.get("scenes") or []
+        names = [x.get("scene") for x in scenes if x.get("scene")]
+        chosen = cfg.get("SCENE") or info.get("active_scene") or info.get("scene")
+        # Falls back to `info` itself for a job whose .blend was probed by an
+        # older version and cached without the per-scene breakdown.
+        sinfo = next((x for x in scenes if x.get("scene") == chosen), info)
+        multi = len(names) > 1
+
+        self._cell(row, "scene", chosen or ("…" if unknown else "—"), mono=True,
+                   editable=can_edit and multi,
+                   job=job, cfg_key="SCENE", kind="choice", choices=names,
+                   locked_why=(why if why else
+                               "Reading the .blend…" if unknown else
+                               "This .blend has only one scene" if not multi
+                               else ""))
+
         classic = job.get("type") == "classic"
-        cams = info.get("cameras") or []
-        cam = cfg.get("CAMERA") or info.get("camera") or ("…" if unknown else "—")
+        cams = sinfo.get("cameras") or []
+        cam = cfg.get("CAMERA") or sinfo.get("camera") or ("…" if unknown else "—")
         self._cell(row, "camera", cam, mono=True,
                    editable=can_edit and classic and bool(cams),
                    job=job, cfg_key="CAMERA", kind="choice", choices=cams,
@@ -367,10 +393,10 @@ class JobsTable(QtWidgets.QTableWidget):
             res = samples = fmt = "…"
             res_why = "Reading the .blend…"
         elif classic:
-            res = f"{info.get('final_x')}×{info.get('final_y')}"
+            res = f"{sinfo.get('final_x')}×{sinfo.get('final_y')}"
             res_why = "Comes from the .blend"
-            samples = str(info.get("samples") or "—")
-            fmt = cfg.get("FILE_FORMAT") or info.get("file_format") or "—"
+            samples = str(sinfo.get("samples") or "—")
+            fmt = cfg.get("FILE_FORMAT") or sinfo.get("file_format") or "—"
         else:
             # A tiled render never produces the .blend's resolution. The script
             # reads it for its ASPECT RATIO only, then sets the scene to one
@@ -378,20 +404,20 @@ class JobsTable(QtWidgets.QTableWidget):
             # scene's own number here read as a promise the render would never
             # keep — a 2000x2000 @200% scene displayed "4000×4000" while every
             # tile on disk was 4096×4096 and the finished image 120000×120000.
-            g = self._tiled_grid(job, info)
+            g = self._tiled_grid(job, sinfo)
             res = f"{g['total_w']}×{g['total_h']}" if g else "…"
             res_why = (
                 f"{g['cols']}×{g['rows']} tiles of {g['tile_w']}×{g['tile_h']} px.\n"
-                f"The .blend's own {info.get('final_x')}×{info.get('final_y')} is "
+                f"The .blend's own {sinfo.get('final_x')}×{sinfo.get('final_y')} is "
                 f"used only for its aspect ratio."
                 if g else "Set by the tiled grid")
-            samples = str(info.get("samples") or "—")
-            fmt = cfg.get("FILE_FORMAT") or info.get("file_format") or "—"
+            samples = str(sinfo.get("samples") or "—")
+            fmt = cfg.get("FILE_FORMAT") or sinfo.get("file_format") or "—"
         self._cell(row, "resolution", res, mono=True, locked_why=res_why)
         self._cell(row, "samples", samples, mono=True,
                    locked_why="Comes from the .blend — never overridden")
 
-        self._cell(row, "frames", self._frames_text(job, info, unknown), mono=True,
+        self._cell(row, "frames", self._frames_text(job, sinfo, unknown), mono=True,
                    editable=can_edit and classic, job=job,
                    cfg_key="_FRAMES", kind="text",
                    locked_why=why or "A tiled render is one frame")

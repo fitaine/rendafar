@@ -46,6 +46,7 @@ FRAME_START   = 0            # animation: 0 = use the scene's own range
 FRAME_END     = 0
 FRAME_STEP    = 0            # 0 = use the scene's step
 
+SCENE         = ""           # which scene to render;  "" = the .blend's active scene
 OUTPUT_DIR    = ""           # "" = use the .blend's own output path
 CAMERA        = ""           # "" = use the scene's active camera
 SKIP_EXISTING = True         # resume: don't re-render frames already on disk
@@ -75,6 +76,7 @@ COMPUTE_DEVICE = "OPTIX"     # only consulted when DEVICE == "GPU"
 # the render maths that must never drift lives here.)
 
 _JOB_OVERRIDABLE = {
+    "SCENE",
     "MODE", "FRAME", "FRAME_START", "FRAME_END", "FRAME_STEP",
     "OUTPUT_DIR", "CAMERA", "SKIP_EXISTING", "DEVICE", "COMPUTE_DEVICE",
     "FILE_FORMAT",
@@ -126,8 +128,40 @@ def _apply_job_override():
     print("", flush=True)
 
 
+def _apply_scene():
+    """
+    Switch to the scene named by SCENE, if one was asked for.
+
+    A .blend can hold several scenes, each with its own cameras, frame range,
+    resolution and output path. Everything below reads bpy.context.scene, so
+    switching it once here is the whole feature.
+
+    THE .BLEND IS STILL IN CHARGE: this picks which scene's settings to obey,
+    it does not override any of them.
+
+    bpy.context.window exists under -b — Blender creates one window in the
+    window manager even in background mode — so a plain assignment is enough.
+    """
+    if not SCENE:
+        return
+    target = bpy.data.scenes.get(SCENE)
+    if target is None:
+        raise RuntimeError(
+            f"scene {SCENE!r} not found in this .blend. "
+            f"Available: {', '.join(s.name for s in bpy.data.scenes)}")
+    win = bpy.context.window
+    if win is None:
+        wins = bpy.context.window_manager.windows
+        win = wins[0] if wins else None
+    if win is None:
+        raise RuntimeError("cannot switch scene: no window in the window manager")
+    win.scene = target
+    print(f"  scene        : {target.name}  (selected by the job)", flush=True)
+
+
 try:
     _apply_job_override()
+    _apply_scene()
 except Exception:
     # Blender exits 0 after an exception at --python import time; the queue
     # would record a broken job as done.  Exit explicitly.
@@ -206,6 +240,12 @@ def render_classic():
     if scene.camera is None:
         raise RuntimeError("No active camera in the scene.")
 
+    # Passed through exactly as given. This is a Blender output path, not
+    # simply a folder: a trailing separator means "write into this directory",
+    # while anything else is a FILENAME PREFIX — ".../still/shot_" writes
+    # shot_0004.png, which is deliberate and used. Normalising it to a folder
+    # here breaks that, so the trailing separator belongs to whoever sets the
+    # value, not to this script.
     if OUTPUT_DIR:
         r.filepath = OUTPUT_DIR
 

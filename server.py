@@ -438,12 +438,17 @@ class Handler(BaseHTTPRequestHandler):
         # OUTPUT_DIR is safe to change here only because the guard below
         # refuses once anything has been rendered; moving the target folder
         # mid-render would abandon the tiles already written.
-        "tiled":   {"FILE_FORMAT", "RENDER_NAME", "OUTPUT_DIR"},
+        # SCENE picks which scene in the .blend to render. Safe here for the
+        # same reason as OUTPUT_DIR: the guard below refuses once anything has
+        # been rendered, and switching scene mid-render would mix two entirely
+        # different images in one folder. Jobs pinned to a snapshot from before
+        # the override existed reject it automatically, via script_overridable.
+        "tiled":   {"SCENE", "FILE_FORMAT", "RENDER_NAME", "OUTPUT_DIR"},
         # FILE_FORMAT needs a script that has the override — snapshots from
         # before 2026-07-27 do not, so it is checked per job below rather than
         # assumed from the type.
-        "classic": {"CAMERA", "FRAME", "FRAME_START", "FRAME_END", "FRAME_STEP",
-                    "OUTPUT_DIR", "DEVICE", "FILE_FORMAT"},
+        "classic": {"SCENE", "CAMERA", "FRAME", "FRAME_START", "FRAME_END",
+                    "FRAME_STEP", "OUTPUT_DIR", "DEVICE", "FILE_FORMAT"},
     }
 
     def _edit_job(self, body):
