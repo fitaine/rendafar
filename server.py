@@ -486,8 +486,29 @@ class Handler(BaseHTTPRequestHandler):
         # "_OUTPUT" is the folder as the UI shows it. Translating it here means
         # the split lives in one place and every front end gets it right.
         if "_OUTPUT" in changes:
-            changes.update(paths.split_output(changes.pop("_OUTPUT"),
-                                              job.get("type")))
+            new_folder = changes.pop("_OUTPUT")
+            if job.get("type") == "classic":
+                # Keep whatever filename is already set: changing the folder
+                # should move the render, not silently rename the file back to
+                # a bare frame number.
+                _old_folder, keep = paths.split_classic_output(
+                    (job.get("config") or {}).get("OUTPUT_DIR"))
+                changes["OUTPUT_DIR"] = paths.join_classic_output(
+                    new_folder, keep)
+            else:
+                changes.update(paths.split_output(new_folder, job.get("type")))
+
+        # The filename shown in the table is the prefix Blender puts before the
+        # frame number, so it is edited on its own and rejoined here.
+        if "_FILENAME" in changes:
+            typed = str(changes.pop("_FILENAME") or "")
+            # Typed with the frame number and extension still on it, because
+            # that is what the cell shows — "Camera_main_0001.png". Strip them,
+            # or they would end up baked into every filename.
+            typed = re.sub(r"\d{4}\.\w+$", "", typed.strip())
+            folder, _old = paths.split_classic_output(
+                (job.get("config") or {}).get("OUTPUT_DIR"))
+            changes["OUTPUT_DIR"] = paths.join_classic_output(folder, typed)
         for key in changes:
             if key not in allowed:
                 raise ValueError(
@@ -502,7 +523,41 @@ class Handler(BaseHTTPRequestHandler):
                 cfg[key] = value
         job["config"] = cfg
         qm.save_job(job)
+        # A hand-typed folder is the usual way two jobs come to share an output,
+        # so the same guarantee applies here as at creation.
+        if job.get("type") == "classic" and "OUTPUT_DIR" in changes:
+            job = self._make_output_unique(job)
         return self._json({"job": job})
+
+    @staticmethod
+    def _make_output_unique(job):
+        """
+        Give a classic job an output nothing else writes over, and save it.
+
+        Applied wherever an output can be set — creating a job and editing the
+        Output cell — because a folder typed by hand is exactly how several
+        jobs come to share one. Six stills of one .blend were queued here all
+        pointing at "…\\Ferme-des-Crozets\\renders": no trailing separator, so
+        Blender would have read it as a filename prefix and written
+        renders0001.png beside the folder, six times, keeping the last.
+
+        Only classic jobs need this. A tiled render already gets its own folder
+        from RENDER_NAME.
+        """
+        cfg = dict(job.get("config") or {})
+        base = cfg.get("OUTPUT_DIR") or ""
+        if not base:
+            return job                    # empty: the .blend's own path, untouched
+
+        taken = {(j.get("config") or {}).get("OUTPUT_DIR")
+                 for j in qm.all_jobs()
+                 if j["id"] != job["id"] and j.get("type") == "classic"}
+        fixed = paths.unique_classic_output(base, cfg, job.get("name"), taken)
+        if fixed and fixed != base:
+            cfg["OUTPUT_DIR"] = fixed
+            job["config"] = cfg
+            qm.save_job(job)
+        return job
 
     def _new_job(self, body):
         """
@@ -553,6 +608,8 @@ class Handler(BaseHTTPRequestHandler):
 
         job = qm.create_job(blend, name=(body.get("name") or None),
                             job_type=job_type, cfg=cfg)
+        if job_type == "classic":
+            self._make_output_unique(job)
 
         out = paths.job_output_dir(job)
         warn = None

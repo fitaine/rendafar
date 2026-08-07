@@ -352,18 +352,37 @@ class NewRenderDialog(QtWidgets.QDialog):
         return out
 
     def _cams_changed(self, *_):
+        """Name the files that will actually appear, before anything is queued."""
         picked = self.selected_cameras()
-        n = len(picked)
-        if n == 0:
+        if not picked:
             self.cams_note.setText("Tick at least one camera.")
-        elif n == 1:
-            self.cams_note.setText(
-                "1 job — output as the .blend has it.")
-        else:
-            self.cams_note.setText(
-                f"{n} jobs, one per camera.\n"
-                f"Each writes with its camera's name in the filename, so they "
-                f"cannot overwrite each other.")
+            self._validate()
+            return
+
+        import paths
+        scenes = {s.get("scene"): s
+                  for s in (getattr(self, "_info", {}) or {}).get("scenes") or []}
+        frame = self.frame.value() or None
+        lines, taken = [], set()
+        for scene, cam in picked:
+            si = scenes.get(scene) or {}
+            base = si.get("filepath", "")
+            out = paths.unique_classic_output(
+                base, {"CAMERA": cam, "SCENE": scene}, cam, taken)
+            taken.add(out)
+            _folder, stem = paths.split_classic_output(out)
+            lines.append(paths.preview_filename(
+                stem, si.get("file_format", "PNG"),
+                frame if frame is not None else si.get("frame_current", 1)))
+
+        head = ("1 job. It will write:" if len(picked) == 1
+                else f"{len(picked)} jobs, one per camera. They will write:")
+        # Named in full rather than described, because a name is checkable and
+        # a description is not — the folder typo that put a render outside its
+        # folder would have been obvious here.
+        shown = lines[:6]
+        more = "" if len(lines) <= 6 else f"\n…and {len(lines) - 6} more"
+        self.cams_note.setText(head + "\n  " + "\n  ".join(shown) + more)
         self._validate()
 
     # ── picking a file ───────────────────────────────────────────────────
@@ -471,28 +490,6 @@ class NewRenderDialog(QtWidgets.QDialog):
                 body["scene"], body["camera"] = scene, cam
         return body
 
-    @staticmethod
-    def _camera_output(scene_info, camera):
-        """
-        Where one camera's still should write, given the scene's own setting.
-
-        Several cameras of one scene otherwise render the same frame number to
-        the same path and quietly overwrite each other — the last one wins and
-        the rest of the work is gone.
-
-        The camera's name becomes part of the FILENAME rather than a new folder:
-        to Blender a path with no trailing separator is a filename prefix, which
-        keeps everything where the .blend already points instead of inventing a
-        folder structure the .blend knows nothing about.
-        """
-        base = (scene_info or {}).get("filepath") or ""
-        if not base:
-            return ""                       # unknown: leave the .blend in charge
-        safe = re.sub(r"[^\w.-]+", "_", camera).strip("_") or "cam"
-        if base.endswith(("/", "\\")):
-            return f"{base}{safe}_"
-        return f"{base.rstrip('_-')}_{safe}_"
-
     def _create_many(self, picked):
         """One job per ticked camera. Stops at the first failure and says so."""
         blend = self.blend_edit.text().strip().strip('"')
@@ -508,7 +505,11 @@ class NewRenderDialog(QtWidgets.QDialog):
                     "name": f"{stem} · {scene}/{cam}" if multi_scene
                             else f"{stem} · {cam}",
                     "scene": scene, "camera": cam,
-                    "output_dir": self._camera_output(scenes.get(scene), cam)}
+                    # Only the base — where this scene already points. The
+                    # server folds the camera into it and guarantees the result
+                    # is unique, so that rule lives in one place rather than
+                    # being reimplemented by every caller.
+                    "output_dir": (scenes.get(scene) or {}).get("filepath", "")}
             if self.frame.value():
                 body["frame"] = self.frame.value()
             try:

@@ -23,6 +23,8 @@ import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import paths
+
 from . import api, theme
 
 # key, heading, width hint
@@ -38,6 +40,7 @@ COLUMNS = [
     ("samples",    "Samples",     62),
     ("frames",     "Frames",      74),
     ("format",     "Format",      62),
+    ("filename",   "Filename",    132),
     ("output",     "Output",      130),   # stretches to fill what is left
 ]
 COL = {key: i for i, (key, _, _) in enumerate(COLUMNS)}
@@ -230,16 +233,23 @@ class JobsTable(QtWidgets.QTableWidget):
 
         h = self.horizontalHeader()
         h.setSectionsMovable(True)          # drag columns into any order
-        h.setStretchLastSection(True)
+        # NOT stretch-the-last-section: with ten columns the table is wider
+        # than the panel, and stretching squeezes Output down to a sliver and
+        # elides the end of the path instead of letting the view scroll to it.
+        h.setStretchLastSection(False)
         h.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
         h.setSectionResizeMode(COL["kind"], QtWidgets.QHeaderView.Fixed)
         for key, _, width in COLUMNS:
             self.setColumnWidth(COL[key], width)
 
+        self.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+
         self.setItemDelegateForColumn(COL["kind"], KindStripe(self))
         self._editor = CellEditor(self)
         self._editor.edited.connect(self._apply_edit)
-        for key in ("camera", "frames", "format", "output", "name"):
+        for key in ("scene", "camera", "frames", "format", "output", "name",
+                    "filename"):
             self.setItemDelegateForColumn(COL[key], self._editor)
 
         self.verticalHeader().setDefaultSectionSize(CellEditor.ROW_HEIGHT)
@@ -442,11 +452,40 @@ class JobsTable(QtWidgets.QTableWidget):
         # itself and produce a path that goes nowhere.
         out = (job.get("output_dir") or cfg.get("OUTPUT_DIR")
                or info.get("filepath") or ("…" if unknown else "—"))
+
+        # Folder and filename are ONE string to Blender, which reads it as a
+        # folder only when it ends in a separator. Shown apart because that
+        # rule is invisible otherwise: a job here was set to a folder named
+        # "render" instead of "renders", and would have written render0001.png
+        # beside the folder, with nothing on screen to give it away.
+        if classic:
+            folder, fname = paths.split_classic_output(
+                cfg.get("OUTPUT_DIR") or out)
+            out = folder or out
+        else:
+            folder, fname = out, ""
+
         self._cell(row, "output", out, mono=True,
                    editable=can_edit, job=job, cfg_key="_OUTPUT", kind="folder",
                    locked_why=why,
                    tip="Where this render writes — double-click, or use … to "
                        "pick a folder")
+
+        if classic:
+            shown = paths.preview_filename(
+                fname, fmt if fmt not in ("…", "—") else "PNG",
+                self._first(cfg.get("FRAME"), sinfo.get("frame_current"), 1))
+            where = folder or "the .blend's own folder"
+            self._cell(row, "filename", shown, mono=True,
+                       editable=can_edit, job=job, cfg_key="_FILENAME",
+                       kind="text", locked_why=why,
+                       tip=f"The file this render writes, in {where}\n\n"
+                           f"Blender adds the frame number and the extension. "
+                           f"Two jobs sharing a folder need different names, "
+                           f"or the second overwrites the first.")
+        else:
+            self._cell(row, "filename", "—", mono=True,
+                       locked_why="A tiled render names its own tiles")
 
     @staticmethod
     def _first(*values):

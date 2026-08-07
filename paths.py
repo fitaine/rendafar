@@ -15,6 +15,7 @@ The app never creates these folders and never writes into them — it only reads
 import datetime
 import json
 import os
+import re
 import time
 
 
@@ -106,6 +107,103 @@ def split_output(value, job_type):
     if not parent or not name:
         return {"OUTPUT_DIR": value}          # a drive root: keep it whole
     return {"OUTPUT_DIR": parent, "RENDER_NAME": name}
+
+
+def unique_classic_output(base, cfg, name, taken=()):
+    """
+    An output path for a classic job that no other job can write over.
+
+    Blender names a still from the frame number alone, so several jobs pointed
+    at one folder all produce 0001.png and the last one wins — silently, with
+    no error and nothing to notice until the folder is opened. A warning is no
+    use for a queue that runs unattended, so the paths are made distinct
+    instead of the clash being reported.
+
+    Two rules, both about how Blender reads a filepath:
+
+      * a path with no trailing separator is a FILENAME PREFIX, not a folder,
+        so "…\\renders" writes renders0001.png BESIDE the folder. If it names a
+        real directory, the separator is added.
+      * whatever the folder, the camera (or scene, or job name) is folded into
+        the filename, giving Camera_sud_0001.png rather than 0001.png.
+
+    `taken` is the set of paths other jobs already resolve to; a counter is
+    appended if the natural name is somehow still a duplicate.
+
+    The result is stored on the job, so it stays put across resumes — which
+    SKIP_EXISTING depends on, since it decides what to re-render by looking for
+    files at exactly this path.
+    """
+    base = (base or "").strip().strip('"')
+    stem = cfg.get("CAMERA") or cfg.get("SCENE") or name or "render"
+    safe = re.sub(r"[^\w.-]+", "_", str(stem)).strip("_") or "render"
+
+    if not base:
+        return ""                    # nothing to anchor to: the .blend decides
+    if base.endswith(("/", "\\")):
+        head = base
+    elif os.path.isdir(base):
+        head = base + os.sep         # a real folder, just missing its slash
+    else:
+        head = base.rstrip("_-") + "_"   # an intentional prefix: extend it
+
+    out = f"{head}{safe}_"
+    n = 2
+    while out in set(taken):
+        out = f"{head}{safe}_{n}_"
+        n += 1
+    return out
+
+
+EXT = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp", "OPEN_EXR": "exr",
+       "TIFF": "tif", "BMP": "bmp", "TARGA": "tga", "FFMPEG": "mp4"}
+
+
+def split_classic_output(value):
+    """
+    A classic OUTPUT_DIR as the two things it really is: (folder, filename).
+
+    Blender stores one string and reads it as a folder when it ends in a
+    separator and as a FILENAME PREFIX otherwise, which is why
+    "…\\Ferme-des-Crozets\\renders" writes renders0001.png beside the folder
+    rather than inside it. Presenting it as one field hides that entirely; a
+    typo of "render" for "renders" is then invisible until the render is over.
+    """
+    value = (value or "").strip().strip('"')
+    if not value:
+        return "", ""
+    if value.endswith(("/", "\\")):
+        return value, ""
+    if os.path.isdir(value):
+        return value + os.sep, ""
+    head, tail = os.path.split(value)
+    return (head + os.sep if head else ""), tail
+
+
+def join_classic_output(folder, filename):
+    """The single string the render script wants, from the two shown."""
+    folder = (folder or "").strip().strip('"')
+    filename = (filename or "").strip().strip('"')
+    if folder and not folder.endswith(("/", "\\")):
+        folder += os.sep
+    return folder + filename
+
+
+def preview_filename(filename, file_format="PNG", frame=1):
+    """
+    What one rendered file will be called — the thing worth checking BEFORE a
+    render, not after.
+
+    Blender appends a four digit frame number and the format's extension, so a
+    filename of "" gives 0001.png: distinct per frame, identical between two
+    jobs pointed at one folder.
+    """
+    ext = EXT.get((file_format or "PNG").upper(), (file_format or "png").lower())
+    try:
+        n = int(frame)
+    except (TypeError, ValueError):
+        n = 1
+    return f"{filename or ''}{n:04d}.{ext}"
 
 
 def classic_manifest_path(job):

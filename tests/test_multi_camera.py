@@ -62,22 +62,43 @@ INFO = {
 }
 
 print("\n=== 1. where each camera writes ===")
-out = NewRenderDialog._camera_output
-check("a folder gets the camera as a filename prefix",
-      out({"filepath": "D:\\renders\\"}, "CamAlpha") == "D:\\renders\\CamAlpha_",
-      out({"filepath": "D:\\renders\\"}, "CamAlpha"))
-check("an existing prefix is extended, not doubled",
-      out({"filepath": "D:\\renders\\shot_"}, "CamB") == "D:\\renders\\shot_CamB_",
-      out({"filepath": "D:\\renders\\shot_"}, "CamB"))
+# The rule lives in paths.unique_classic_output now, so the dialog, the server
+# and the Filename column give one answer instead of three copies of it.
+import paths                                     # noqa: E402
+B = "D:" + chr(92) + "r" + chr(92)
+u = paths.unique_classic_output
+check("a folder gets the camera folded into the filename",
+      u(B, {"CAMERA": "CamAlpha"}, "j") == B + "CamAlpha_",
+      u(B, {"CAMERA": "CamAlpha"}, "j"))
+check("an existing prefix is extended, not replaced",
+      u(B + "shot_", {"CAMERA": "CamB"}, "j") == B + "shot_CamB_",
+      u(B + "shot_", {"CAMERA": "CamB"}, "j"))
 check("awkward camera names are made safe",
-      out({"filepath": "D:\\r\\"}, "Camera 6.5x6.3 ratio")
-      == "D:\\r\\Camera_6.5x6.3_ratio_",
-      out({"filepath": "D:\\r\\"}, "Camera 6.5x6.3 ratio"))
-check("an unknown output leaves the .blend in charge",
-      out({}, "CamAlpha") == "" and out(None, "CamAlpha") == "")
+      u(B, {"CAMERA": "Camera 6.5x6.3 ratio"}, "j") == B + "Camera_6.5x6.3_ratio_",
+      u(B, {"CAMERA": "Camera 6.5x6.3 ratio"}, "j"))
+check("an unknown output leaves the .blend in charge", u("", {}, "j") == "")
 check("two cameras never land on the same path",
-      out({"filepath": "D:\\r\\"}, "A") != out({"filepath": "D:\\r\\"}, "B"),
+      u(B, {"CAMERA": "A"}, "j") != u(B, {"CAMERA": "B"}, "j"),
       "this is the whole point — otherwise they overwrite each other")
+check("a duplicate is broken by a counter",
+      u(B, {"CAMERA": "A"}, "j", {B + "A_"}) == B + "A_2_",
+      u(B, {"CAMERA": "A"}, "j", {B + "A_"}))
+
+print("\n=== 1b. the filename is shown, not left to be discovered ===")
+check("a bare folder gives a frame-numbered name",
+      paths.preview_filename("", "PNG", 1) == "0001.png",
+      "identical for every job sharing that folder — which is the trap")
+check("a prefix makes it distinct",
+      paths.preview_filename("Camera_main_", "PNG", 1) == "Camera_main_0001.png")
+check("the extension follows the format",
+      paths.preview_filename("a_", "JPEG", 4) == "a_0004.jpg",
+      paths.preview_filename("a_", "JPEG", 4))
+check("folder and filename split apart",
+      paths.split_classic_output(B + "Cam_") == (B, "Cam_"),
+      str(paths.split_classic_output(B + "Cam_")))
+check("...and rejoin", paths.join_classic_output("D:" + chr(92) + "r", "Cam_")
+      == B + "Cam_")
+
 
 print("\n=== 2. the picker ===")
 api.blend_info = lambda path, refresh=False: INFO
