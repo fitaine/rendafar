@@ -33,7 +33,7 @@ DEFAULT_TILED_SCRIPT = os.path.join(
 
 MASTER_CLASSIC_SCRIPT = os.path.join(APP_DIR, "render_classic.py")
 DEFAULT_CLASSIC_SCRIPT = os.path.join(
-    FROZEN_DIR, "render_classic_2026-07-26.py"
+    FROZEN_DIR, "render_classic_2026-08-10_cli.py"
 )
 
 DEFAULT_SCRIPTS = {"tiled": DEFAULT_TILED_SCRIPT,

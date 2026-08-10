@@ -364,6 +364,62 @@ def render_classic():
     times         = []
     done_count    = 0
 
+    # ── Let Blender render it, so the progress reaches the log ───────────
+    #
+    # bpy.ops.render.render() prints NOTHING in background mode. Blender's own
+    # render loop — the one "-f 1" starts — prints a line per pass:
+    #
+    #   00:13.390 render | Fra:1 | Remaining: 00:12.34 | Mem: 12M | Sample 1025/2000
+    #
+    # Measured on one scene, same settings, same 26s render: 4 sample lines
+    # from "-f", 0 from bpy.ops. runner.py has always known how to parse that
+    # line; it simply never had one to read.
+    #
+    # So for a STILL the runner passes "-f <frame>" and sets this variable, and
+    # everything below is skipped: Blender renders after this script returns,
+    # and the bookkeeping happens in handlers instead of in the loop.
+    #
+    # Stills only. An animation's frame list depends on which frames are
+    # already on disk, which is not known until the .blend is open, and moving
+    # that decision out here would mean loading a 1.4 GB scene twice.
+    if os.environ.get("RENDAFAR_CLI_RENDER") == "1" and not is_movie:
+        if len(frames) == 1 and SKIP_EXISTING:
+            r.filepath = template
+            if os.path.exists(bpy.path.abspath(r.frame_path(frame=frames[0]))):
+                print(f"  [    1/1] SKIP  frame {frames[0]} — already on disk",
+                      flush=True)
+                mark(0)
+                manifest["frames_done"] = 1
+                write_manifest()
+                return manifest
+
+        write_manifest()
+        _cli_state = {"t0": None}
+
+        def _on_pre(*_a):
+            _cli_state["t0"] = time.time()
+
+        def _on_write(*_a):
+            # Fires once the file is on disk, which is what "done" means here.
+            f = frames[0]
+            target = bpy.path.abspath(r.frame_path(frame=f))
+            elapsed = time.time() - (_cli_state["t0"] or time.time())
+            mark(0)
+            manifest["frames_done"] = 1
+            manifest["frame_times"][str(f)] = round(elapsed, 2)
+            manifest["last_file"] = target
+            write_manifest()
+            print(f"\n  [    1/1]  frame {f}  →  {os.path.basename(target)}"
+                  f"   in {_hms(elapsed)}", flush=True)
+            print(f"\n{'═' * 64}\n  1/1 frames  |  {len(manifest['errors'])} errors"
+                  f"\n  output  →  {out_dir}\n{'═' * 64}", flush=True)
+
+        bpy.app.handlers.render_pre.append(_on_pre)
+        bpy.app.handlers.render_write.append(_on_write)
+        print(f"  [    1/1]  frame {frames[0]}  — rendering, progress below",
+              flush=True)
+        return manifest
+
     try:
         # ── Movie: one pass, no resume ───────────────────────────────────
         if is_movie:

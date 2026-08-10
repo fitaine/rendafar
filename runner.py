@@ -107,6 +107,54 @@ def pid_alive(pid, image="blender.exe"):
     return image.lower() in out.lower()
 
 
+def cli_still_frame(job):
+    """
+    The frame number for a still that should render through Blender's own
+    loop, or None to leave the job on the script's loop.
+
+    None is returned generously. The frame has to be certain, because "-f"
+    renders exactly what it is told: an animation, a movie container, a job
+    whose script predates the CLI path, or a still whose frame is only known
+    once the .blend is open all stay as they were. A missing progress bar is a
+    nuisance; the wrong frame is a wasted hour.
+    """
+    if job.get("type") != "classic":
+        return None
+    cfg = job.get("config") or {}
+    if cfg.get("MODE") != "still":
+        return None
+
+    # The pinned script has to understand the handshake. Older snapshots would
+    # ignore RENDAFAR_CLI_RENDER, run their own loop, and then Blender's "-f"
+    # would render the frame a second time.
+    try:
+        src = open(job.get("script", ""), encoding="utf-8").read()
+    except OSError:
+        return None
+    if "RENDAFAR_CLI_RENDER" not in src:
+        return None
+
+    frame = cfg.get("FRAME")
+    if isinstance(frame, int) and frame:
+        return frame
+
+    # Not set on the job: the script would use the scene's current frame, so
+    # take it from the cached probe rather than opening the .blend again.
+    try:
+        import blend_info
+        info = blend_info.read(job["blend"])
+        if info.get("error"):
+            return None
+        scene = cfg.get("SCENE")
+        if scene:
+            info = next((s for s in info.get("scenes") or []
+                         if s.get("scene") == scene), None) or {}
+        cur = info.get("frame_current")
+        return cur if isinstance(cur, int) else None
+    except Exception:
+        return None
+
+
 def kill_tree(pid):
     """
     Kill a process and everything it spawned.
@@ -204,6 +252,21 @@ class Runner:
 
             cmd = [config.BLENDER_EXE, "--background", job["blend"],
                    "--python", job["script"]]
+
+            # A still renders through Blender's own loop, which is the only way
+            # its sample progress reaches the log — bpy.ops.render.render()
+            # prints nothing at all in background mode. Arguments are processed
+            # in order, so the script sets the scene up and "-f" then renders it.
+            #
+            # Only when the frame is genuinely known: guessing it would render
+            # the wrong one, which is worse than no progress bar. An animation
+            # keeps the script's own loop, because which frames it still owes
+            # depends on what is on disk and is not known until the .blend is
+            # open.
+            frame = cli_still_frame(job)
+            if frame is not None:
+                cmd += ["-f", str(frame)]
+                env["RENDAFAR_CLI_RENDER"] = "1"
 
             log_path = os.path.join(config.LOGS_DIR, f"{job_id}.log")
             self._logfile = open(log_path, "a", encoding="utf-8", errors="replace")
