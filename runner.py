@@ -39,7 +39,31 @@ _RE_REMAIN = re.compile(r"Remaining:\s*([\d:.]+)")
 # After this long with no new render line, the reading is stale (Blender is
 # saving the file, loading the scene, or between tiles) and must not be shown
 # as if it were live.
-LIVE_STALE_S = 45
+#
+# Generous, because Cycles reports in sample BATCHES rather than on a timer:
+# measured, a 27s render reported every 13s and a 107s render every 27s, the
+# gap growing with the length of the render. On a 90 minute still that is one
+# reading every 20-40 minutes. At 45s — the old value, set when progress was
+# assumed to arrive continuously — the sample count would have appeared for
+# under a minute and then vanished for half an hour.
+#
+# Age is reported alongside, so a reading is never passed off as fresher than
+# it is.
+LIVE_STALE_S = 3600
+
+
+def _clock_to_s(text):
+    """'01:17.07' or '1:02:03' as seconds, or None."""
+    try:
+        parts = [float(p) for p in str(text).split(":")]
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= len(parts) <= 3:
+        return None
+    total = 0.0
+    for p in parts:
+        total = total * 60 + p
+    return total
 
 
 def parse_progress_line(line):
@@ -209,6 +233,16 @@ class Runner:
             # frozen bar, so drop it once stale.
             if live and (not busy or time.time() - live["at"] > LIVE_STALE_S):
                 live = None
+            if live:
+                live = dict(live)
+                live["age_s"] = round(time.time() - live["at"])
+                # Blender's own estimate, counted down by however long ago it
+                # said it. Cycles reports a few times per render, so without
+                # this the figure on screen would sit unchanged for half an
+                # hour and read as a stall.
+                rem = _clock_to_s(live.get("remaining"))
+                if rem is not None:
+                    live["remaining_s"] = max(0, round(rem - live["age_s"]))
             out = {
                 "busy":       busy,
                 "stopping_after_tile": self._stop_after,

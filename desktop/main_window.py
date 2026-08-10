@@ -764,7 +764,32 @@ class MainWindow(QtWidgets.QMainWindow):
 
         bits = []
         p = s.get("progress")
-        if p and p.get("total"):
+        live = s.get("live") or {}
+        samples = live.get("samples_total")
+
+        # A still is one frame, so counting frames says nothing useful: it
+        # reads "0/1 frames (0.0%)" for an hour and then jumps to done. When
+        # Blender is reporting samples, those replace it — they describe the
+        # same work in terms that actually move.
+        single_frame = bool(p and p.get("total") == 1)
+
+        if samples:
+            bits.append(f"sample {live['sample']:,}/{samples:,} "
+                        f"({live.get('percent', 0)}%)".replace(",", " "))
+            rem = live.get("remaining_s")
+            if rem is not None:
+                # Blender's own figure, counted down since it said it. Cycles
+                # reports a few times per render, so the age is worth showing:
+                # a number that has not moved for 20 minutes should say so
+                # rather than look live.
+                age = live.get("age_s") or 0
+                stamp = f"  (as of {hms(age)} ago)" if age > 120 else ""
+                bits.append(f"ETA {hms(rem)}{stamp}")
+
+        # Never for a single frame, with or without samples: "0/1 frames (0%)"
+        # sits there for an hour and then jumps to 1/1, which describes nothing
+        # that happened in between.
+        if p and p.get("total") and not single_frame:
             bits.append(f"{p['done']}/{p['total']} {p['unit']} ({p['percent']}%)")
             if p.get("eta_s") is not None:
                 clock = paths.format_eta_clock(p.get("eta_at"))
