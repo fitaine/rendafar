@@ -393,6 +393,14 @@ def render_classic():
                 write_manifest()
                 return manifest
 
+        # Blender's own -f render refuses to overwrite an existing file and
+        # exits 0 having done nothing — which reads as a successful render of
+        # zero frames. The decision about whether to re-render belongs to
+        # SKIP_EXISTING above, which has already been made by this point, so
+        # Blender must not make it again and more quietly.
+        r.use_overwrite = True
+        r.use_placeholder = False
+
         write_manifest()
         _cli_state = {"t0": None}
 

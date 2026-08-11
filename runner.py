@@ -327,6 +327,18 @@ class Runner:
             # open.
             frame = cli_still_frame(job)
             if frame is not None:
+                # -S BEFORE --python, and it is not optional when a scene is
+                # chosen. Blender's -f renders the scene that was active when
+                # the FILE loaded and ignores a later window.scene switch, so
+                # the script would configure one scene while -f rendered
+                # another — with its own untouched output path. That is exactly
+                # what happened: three stills "rendered" to C:\tmp in three
+                # seconds, found an old file there, skipped it and exited 0.
+                scene = (job.get("config") or {}).get("SCENE")
+                if scene:
+                    # After the .blend, before --python: the script must see
+                    # the chosen scene as the active one.
+                    cmd = cmd[:3] + ["-S", str(scene)] + cmd[3:]
                 cmd += ["-f", str(frame)]
                 env["RENDAFAR_CLI_RENDER"] = "1"
 

@@ -109,5 +109,34 @@ check("...and says how to undo it",
       "render_classic_2026-08-07.py" in cfg_src,
       "jobs pin their script, so switching back affects nothing already queued")
 
+print("\n=== 7. the scene must be chosen with -S, not switched from Python ===")
+# Three renders "succeeded" in three seconds having produced nothing. Blender's
+# -f renders the scene that was active when the FILE loaded and IGNORES a later
+# bpy.context.window.scene switch — so the script configured one scene while -f
+# rendered another, with its own untouched output path of /tmp. An old file was
+# sitting there, so Blender skipped it and exited 0. Proven directly:
+#
+#   script switches to Beta, sets filepath  ->  Saved: C:\tmp\0001.png
+#   -S Beta given on the command line       ->  Saved: <the job's folder>,
+#                                               32x48, which is Beta's size
+#
+# The first verification missed it because that test .blend had ONE scene and
+# no scene override — the single case where the bug cannot show.
+runner_src = open(os.path.join(APP, "runner.py"), encoding="utf-8").read()
+check("the runner passes -S when the job names a scene",
+      '["-S", str(scene)]' in runner_src,
+      "without it, -f renders whichever scene the .blend happened to open with")
+check("...placed after the .blend and before --python",
+      'cmd[:3] + ["-S", str(scene)] + cmd[3:]' in runner_src,
+      "the script has to SEE the chosen scene as active, or it configures one "
+      "scene while Blender renders another")
+
+script_src = open(NEW, encoding="utf-8").read()
+check("the script stops Blender skipping an existing file",
+      "r.use_overwrite = True" in script_src,
+      "-f refuses to overwrite and exits 0 having rendered nothing, which "
+      "reads as success. Whether to re-render is SKIP_EXISTING's decision and "
+      "it has already been made by that point")
+
 print(f"\n{'=' * 62}\n  {sum(results)}/{len(results)} passed\n{'=' * 62}")
 sys.exit(0 if all(results) else 1)
