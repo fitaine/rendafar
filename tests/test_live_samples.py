@@ -142,6 +142,37 @@ check("but a reading past the staleness window is dropped entirely",
       r.status()["live"] is None,
       "an hour with no word from Blender is not a live reading any more")
 
+
+print("\n=== 8. what Blender is doing BEFORE the first sample ===")
+# Asked for after a still sat for an hour with nothing on screen: Cycles
+# reports synchronising objects, loading kernels and building the BVH long
+# before it takes a sample, and that is what separates "still working" from
+# "stopped without saying so".
+import runner as _r
+line = "00:00.406  render | Fra: 1 | Mem: 1M | Updating Scene BVH | Building BVH 0%"
+got = _r.parse_progress_line(line)
+check("a setup line is progress, not noise", got is not None, str(got))
+check("...and names the phase verbatim",
+      got.get("phase") == "Updating Scene BVH | Building BVH 0%",
+      "taken as Cycles writes it, so a phase a future Blender adds is not "
+      f"silently dropped.  got {got.get('phase')!r}")
+check("...with the memory figure", got.get("mem") == "1M", str(got.get("mem")))
+
+txt = header({"phase": "Updating Scene BVH | Building BVH 0%",
+              "mem": "3288M", "age_s": 8}, STILL)
+check("the phase reaches the header", "Building BVH 0%" in txt, txt)
+check("...with memory beside it", "mem 3288M" in txt, txt)
+
+txt = header({"phase": "Loading render kernels (may take a few minutes the "
+                       "first time)", "mem": "512M", "age_s": 1320}, STILL)
+check("a phase that has not moved for 22 minutes says so",
+      "22m 00s on this step" in txt,
+      "this is the whole point — a render stuck loading kernels looks exactly "
+      f"like one that is working, unless it is timed.  got {txt}")
+
+check("a line with no phase and no samples is still ignored",
+      _r.parse_progress_line("00:26.046 render | Time: 00:25.70") is None)
+
 win.close()
 print(f"\n{'=' * 62}\n  {sum(results)}/{len(results)} passed\n{'=' * 62}")
 sys.exit(0 if all(results) else 1)

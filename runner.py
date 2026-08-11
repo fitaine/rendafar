@@ -35,6 +35,8 @@ _RE_FRAME  = re.compile(r"Fra:\s*(\d+)")
 _RE_CYTILE = re.compile(r"Rendered\s+(\d+)\s*/\s*(\d+)\s+Tiles")
 _RE_SAMPLE = re.compile(r"Sample\s+(\d+)\s*/\s*(\d+)")
 _RE_REMAIN = re.compile(r"Remaining:\s*([\d:.]+)")
+# "Mem: 3288M" — and everything after it is Cycles' description of the phase.
+_RE_MEM    = re.compile(r"Mem:\s*([\d.]+M)")
 
 # After this long with no new render line, the reading is stale (Blender is
 # saving the file, loading the scene, or between tiles) and must not be shown
@@ -67,15 +69,41 @@ def _clock_to_s(text):
 
 
 def parse_progress_line(line):
-    """Extract Cycles' live progress from one stdout line, or None."""
-    if "Sample" not in line and "Rendered" not in line:
+    """
+    Cycles' live progress from one stdout line, or None.
+
+    Two kinds of line matter, and both look like this:
+
+      … | Fra: 1 | Mem: 1M | Updating Scene BVH | Building BVH 0%
+      … | Fra: 1 | Remaining: 00:12.34 | Mem: 12M | Sample 1025/2000
+
+    The first kind is what Blender shows before a single sample is taken —
+    synchronising objects, loading kernels, building the BVH. It is the answer
+    to "is this working or has it silently stopped": a render sitting on
+    "Loading render kernels" for twenty minutes looks very different from one
+    that has reached "Sample 0/2048", and neither is visible from a sample
+    count alone.
+    """
+    if "Fra:" not in line and "Sample" not in line and "Rendered" not in line:
         return None
     sample = _RE_SAMPLE.search(line)
     cyt    = _RE_CYTILE.search(line)
-    if not sample and not cyt:
-        return None
 
     d = {"at": time.time()}
+
+    # Everything after the memory figure is Cycles' own description of what it
+    # is doing. Taken verbatim rather than matched against a list of known
+    # phases, which would silently drop anything a future Blender adds.
+    mem = _RE_MEM.search(line)
+    if mem:
+        d["mem"] = mem.group(1)
+        tail = line[mem.end():].strip(" |")
+        if tail:
+            d["phase"] = tail
+
+    if not sample and not cyt:
+        # A status line with nothing to say is not progress.
+        return d if d.get("phase") else None
     f = _RE_FRAME.search(line)
     if f:
         d["frame"] = int(f.group(1))

@@ -104,12 +104,38 @@ def save_job(job):
 
 
 def _next_id():
+    """
+    A job id that has never been used before.
+
+    Ids must NOT be recycled. A job's manifest is named after its id, so a
+    reused id inherits the dead job's manifest: a brand new render then starts
+    with someone else's frame times and reports an ETA computed from a
+    different scene entirely. That happened here — a fresh still of one scene
+    showed 0/1 frames done and an ETA of 984s, carried over from a deleted
+    Ferme-des-Crozets camera.
+
+    Counting the job files alone is not enough, because removing the newest job
+    lowers the maximum and the next one takes its number back. A high-water
+    mark in state.json settles it, with the files as a floor so an old queue
+    that predates the mark still behaves.
+    """
     n = 0
     if os.path.isdir(config.QUEUE_DIR):
         for fn in os.listdir(config.QUEUE_DIR):
             m = JOB_RE.match(fn)
             if m:
                 n = max(n, int(m.group(1)))
+            # Orphan manifests count too: they are exactly the collision.
+            elif fn.startswith("job_") and fn.endswith("_manifest.json"):
+                try:
+                    n = max(n, int(fn[4:8]))
+                except ValueError:
+                    pass
+
+    st = load_state()
+    n = max(n, int(st.get("last_id_n") or 0))
+    st["last_id_n"] = n + 1
+    save_state(st)
     return f"job_{n + 1:04d}"
 
 
@@ -405,6 +431,20 @@ def remove(job_id):
     try:
         os.unlink(job_path(job_id))
     except FileNotFoundError:
+        pass
+
+    # The job's manifest goes with it. Left behind, it is inherited by whatever
+    # job takes that id next, which then starts life with another render's
+    # frame times, ETA and — because the script carries last_file forward —
+    # another render's image in the preview. That is exactly what happened
+    # here: a fresh still showed a finished Ferme-des-Crozets frame.
+    #
+    # This is only the tidying half. Ids are no longer recycled either, so a
+    # manifest that survives some other way still cannot be picked up.
+    try:
+        import paths
+        os.unlink(paths.classic_manifest_path({"id": job_id}))
+    except (FileNotFoundError, OSError):
         pass
     st = load_state()
     st["order"] = [i for i in st["order"] if i != job_id]

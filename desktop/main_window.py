@@ -776,6 +776,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if samples:
             bits.append(f"sample {live['sample']:,}/{samples:,} "
                         f"({live.get('percent', 0)}%)".replace(",", " "))
+        elif live.get("phase"):
+            # Before the first sample there is nothing to count, but Cycles is
+            # busy: synchronising objects, loading kernels, building the BVH.
+            # Naming the phase is what separates "still working" from "stopped
+            # without saying so" — a render sitting on "Loading render kernels"
+            # for twenty minutes reads very differently from one that has
+            # reached "Sample 0/2048".
+            age = live.get("age_s") or 0
+            stuck = f"  ({hms(age)} on this step)" if age > 120 else ""
+            bits.append(f"{live['phase']}{stuck}")
+
+        if live.get("mem"):
+            bits.append(f"mem {live['mem']}")
+
+        if samples:
             rem = live.get("remaining_s")
             if rem is not None:
                 # Blender's own figure, counted down since it said it. Cycles
