@@ -10,7 +10,10 @@ empty, notifications are silently skipped and the app runs fine without them.
 import datetime
 import io
 import json
+import socket
 import threading
+import time
+import urllib.error
 import urllib.request
 import uuid
 
@@ -26,17 +29,58 @@ def enabled():
     return bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
 
+# How long to keep trying, in seconds between attempts. About eight minutes in
+# total, which is the case this exists for: after a power cut the machine boots,
+# the scheduled task starts the server, and the server tries to say "your render
+# was interrupted and has resumed" before Windows has finished bringing the
+# network up. That message failed with getaddrinfo and was simply dropped — the
+# single most useful notification the app sends, lost exactly when it matters.
+RETRY_DELAYS = (5, 15, 45, 120, 300)
+
+
+def _is_transient(err):
+    """
+    Worth trying again, or hopeless?
+
+    A name that will not resolve and a refused connection are the network not
+    being ready. An HTTP reply is Telegram itself answering — a bad token or a
+    wrong chat id will fail identically for ever, so retrying only delays the
+    message in the log that says so.
+    """
+    if isinstance(err, urllib.error.HTTPError):
+        return False
+    return isinstance(err, (urllib.error.URLError, OSError, socket.timeout))
+
+
+def _send_with_retry(build_request, label):
+    """Try, and keep trying while the failure looks like a network still waking."""
+    for i, delay in enumerate((0,) + RETRY_DELAYS):
+        if delay:
+            time.sleep(delay)
+        try:
+            urllib.request.urlopen(build_request(), timeout=10).read()
+            if i:
+                print(f"  telegram {label} sent after {i} retr"
+                      f"{'y' if i == 1 else 'ies'}")
+            return True
+        except Exception as e:
+            if not _is_transient(e):
+                print(f"  telegram {label} refused: {e}")
+                return False
+            last = e
+    print(f"  telegram {label} failed after {len(RETRY_DELAYS)} retries: {last}")
+    return False
+
+
 def _post(text):
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data=json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text,
-                         "disable_web_page_preview": True}).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        urllib.request.urlopen(req, timeout=10).read()
-    except Exception as e:
-        print(f"  telegram send failed: {e}")
+    def build():
+        return urllib.request.Request(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            data=json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text,
+                             "disable_web_page_preview": True}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+    return _send_with_retry(build, "send")
 
 
 def send(text):
@@ -74,15 +118,18 @@ def _post_photo(image_bytes, caption):
     parts.append(f'\r\n--{boundary}--\r\n'.encode())
     body = b"".join(parts)
 
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-    )
-    try:
-        urllib.request.urlopen(req, timeout=25).read()
-    except Exception as e:
-        print(f"  telegram photo failed, sending text instead: {e}")
+    def build():
+        return urllib.request.Request(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
+    # Retried on the same terms as a text message. Falling straight back to
+    # text was no help after the power cut: the text send had no retry either,
+    # so both failed for the same reason and the notification was lost twice.
+    if not _send_with_retry(build, "photo"):
+        print("  telegram: sending the caption without the photo")
         _post(caption)
 
 
