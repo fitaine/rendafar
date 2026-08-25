@@ -28,7 +28,7 @@ MASTER_SCRIPT = os.path.join(RENDER_SCRIPTS_DIR, "render_tiles_unlimited.py")
 # Read-only snapshots that jobs pin to. Bump these when a new snapshot is cut;
 # jobs already created keep pointing at whichever one they recorded.
 DEFAULT_TILED_SCRIPT = os.path.join(
-    FROZEN_DIR, "render_tiles_unlimited_2026-08-07.py"
+    FROZEN_DIR, "render_tiles_unlimited_2026-08-25.py"
 )
 
 MASTER_CLASSIC_SCRIPT = os.path.join(APP_DIR, "render_classic.py")
