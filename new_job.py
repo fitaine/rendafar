@@ -52,7 +52,7 @@ def main():
         print("  Drag a .blend file onto NEW JOB.bat, or:")
         print("  python new_job.py path\\to\\scene.blend")
         return 1
-    blend = os.path.abspath(sys.argv[1])
+    blend = os.path.abspath(paths.clean_path(sys.argv[1]))
     if not os.path.isfile(blend):
         print(f"  file not found: {blend}")
         return 1

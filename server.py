@@ -599,7 +599,7 @@ class Handler(BaseHTTPRequestHandler):
         applies. Everything else — resolution, samples, output path — continues
         to come from the .blend.
         """
-        blend = (body.get("blend") or "").strip().strip('"')
+        blend = paths.clean_path(body.get("blend"))
         if not blend.lower().endswith(".blend"):
             raise ValueError("not a .blend file")
         if not os.path.isfile(blend):

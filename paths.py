@@ -17,6 +17,39 @@ import json
 import os
 import re
 import time
+import urllib.parse
+
+
+def clean_path(raw):
+    r"""Normalise a path typed or pasted by a person.
+
+    A path reaches the app in several mangled forms and every one of them
+    fails `os.path.isfile` with an unhelpful "file not found":
+
+        "C:\....blend"                 Shift+right-click, Copy as path
+        C:\...\Piste%20de%20bobsleigh    copied from anywhere URL-encoding
+        file:///C:/.../a.blend            dragged from a browser
+        C:/.../a.blend                    forward slashes
+
+    Percent-decoding is only applied when a '%' is present, so a filename that
+    legitimately contains one is left alone.
+    """
+    if raw is None:
+        return ""
+    p = str(raw).strip().strip('"').strip("'")
+    if p.lower().startswith("file:///"):
+        p = p[8:]
+    elif p.lower().startswith("file://"):
+        p = p[7:]
+    if "%" in p:
+        decoded = urllib.parse.unquote(p)
+        # Only take the decoded form if it actually helps, so a real '%' in a
+        # name is not mangled into something that does not exist.
+        if os.path.exists(decoded) or not os.path.exists(p):
+            p = decoded
+    if len(p) > 2 and p[1] == ":":
+        p = p.replace("/", os.sep)
+    return p
 
 
 def blender_abspath(path, blend_path):

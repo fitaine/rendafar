@@ -14,6 +14,8 @@ leaving them invisible until the render starts.
 import hashlib
 import json
 import os
+
+import paths
 import subprocess
 
 import config
@@ -105,7 +107,7 @@ def read(blend, refresh=False):
     Cached by path and modification time, so the cost is paid once per file
     and a re-saved .blend is picked up automatically.
     """
-    blend = os.path.abspath(blend)
+    blend = os.path.abspath(paths.clean_path(blend))
     if not os.path.isfile(blend):
         return {"error": "file not found"}
 

@@ -147,7 +147,8 @@ def create_job(blend, name=None, job_type="tiled", cfg=None, script=None):
     resume.  It defaults to the current frozen snapshot so a later edit to the
     master script can never change how an existing job renders.
     """
-    blend = os.path.abspath(blend)
+    import paths            # local, as elsewhere in this module
+    blend = os.path.abspath(paths.clean_path(blend))
     if not os.path.isfile(blend):
         raise FileNotFoundError(f"blend file not found: {blend}")
 
