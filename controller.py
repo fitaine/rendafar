@@ -7,6 +7,7 @@ This is the only module that decides to start a render.
 import threading
 
 import config
+import gpu_health
 import queue_manager as qm
 from runner import BadOutput, Runner, pid_alive, kill_tree
 
@@ -73,9 +74,12 @@ class Controller:
         was queued but never started stays queued, so merely launching the
         server never fires up the GPU on its own.
         """
+        had_gpu_flag = bool(qm.load_state().get("gpu_needs_reboot"))
         found = self.recover()
+        # A job held back after a GPU crash is waiting for exactly this boot.
+        gpu_cleared = had_gpu_flag and self.gpu_block() is None
         started = None
-        if found:
+        if found or gpu_cleared:
             for job_id in found:
                 qm.resume(job_id)
             started = self.start_next()
@@ -85,10 +89,21 @@ class Controller:
 
     # ── control ──────────────────────────────────────────────────────────
 
+    def gpu_block(self):
+        """Why rendering is held until a reboot, or None. Clears after reboot."""
+        st = qm.load_state()
+        had = bool(st.get("gpu_needs_reboot"))
+        reason = gpu_health.reboot_block(st)
+        if had and reason is None:
+            qm.save_state(st)
+        return reason
+
     def start_next(self):
         """Start the first queued job, if the GPU is free. Returns the job or None."""
         with self._lock:
             if self.runner.is_busy():
+                return None
+            if self.gpu_block():
                 return None
             while True:
                 job = qm.next_queued()
@@ -109,6 +124,11 @@ class Controller:
         with self._lock:
             if self.runner.is_busy():
                 raise RuntimeError("a render is already running")
+            block = self.gpu_block()
+            if block:
+                raise RuntimeError(f"{block}. Reboot the PC first: the driver is "
+                                   "unreliable until then (a relaunch hung for 2 h "
+                                   "on 2026-11-12). Queued jobs resume after reboot.")
             qm.reorder([job_id])
             job = qm.load_job(job_id)
             if job and job["state"] in qm.RESUMABLE + (qm.DONE,):
@@ -133,6 +153,7 @@ class Controller:
         # finished.  Callers that mean "is there work left" must use this, or
         # they will see a phantom idle moment between every pair of jobs.
         st["queue_idle"] = (not st["busy"]) and nxt is None
+        st["gpu_block"]  = self.gpu_block()
         return st
 
     # ── queue advance ────────────────────────────────────────────────────

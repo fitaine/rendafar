@@ -13,6 +13,7 @@ import time
 from collections import deque
 
 import config
+import gpu_health
 import paths
 import queue_manager as qm
 
@@ -272,6 +273,7 @@ class Runner:
         self._logfile  = None
         self._live     = None       # progress inside the current frame/tile
         self._adopted  = False      # supervising a render a crashed server left
+        self._gpu_fault = None      # set by _gpu_watch when it kills a hung render
         self.on_finish = on_finish      # called (job_id, final_state)
 
     # ── status ───────────────────────────────────────────────────────────
@@ -423,8 +425,11 @@ class Runner:
             st["running_pid"] = self._proc.pid   # for crash detection at boot
             qm.save_state(st)
 
+            self._gpu_fault = None
             threading.Thread(target=self._pump,  daemon=True).start()
             threading.Thread(target=self._watch, daemon=True).start()
+            threading.Thread(target=self._gpu_watch, args=(self._proc,),
+                             daemon=True).start()
             return job
 
     def adopt(self, job_id, pid):
@@ -581,6 +586,38 @@ class Runner:
         except (ValueError, OSError):
             pass        # pipe closed by the kill — expected on stop
 
+    def _log_line(self, line):
+        with self._lock:
+            self._buffer.append(line)
+            if self._logfile:
+                self._logfile.write(line + "\n")
+                self._logfile.flush()
+
+    def _gpu_watch(self, proc):
+        """Kill a render whose GPU has hung (see gpu_health)."""
+        watch = gpu_health.HangWatch(self._log_line)
+        job = qm.load_job(self._job_id)
+        last_done, since = self._done_count(job), time.time()
+        while proc.poll() is None:
+            time.sleep(gpu_health.GPU_SAMPLE_S)
+            with self._lock:
+                if self._proc is not proc or self._stopping:
+                    return
+            done = self._done_count(job)
+            if done != last_done:
+                last_done, since = done, time.time()
+            avg = (paths.progress(job) or {}).get("avg_tile_s") or 0
+            reason = watch.tick(time.time() - since, avg)
+            if reason:
+                self._log_line(f"  !! {reason}. Killing the render; "
+                               "finished tiles are kept. Reboot before rendering again.")
+                with self._lock:
+                    if self._proc is not proc:
+                        return
+                    self._gpu_fault = reason
+                kill_tree(proc.pid)
+                return
+
     def _watch(self):
         proc = self._proc
         rc   = proc.wait()
@@ -590,11 +627,27 @@ class Runner:
         with self._lock:
             job_id   = self._job_id
             stopping = self._stopping
+            gpu_fault = getattr(self, "_gpu_fault", None)
+            self._gpu_fault = None
+            tail = list(self._buffer)[-400:]
             if self._logfile:
                 self._logfile.close()
                 self._logfile = None
 
         state, note = self._outcome(job_id, rc, stopping)
+        requeue = False
+        if not stopping and state == qm.FAILED:
+            crash = gpu_fault or (gpu_health.crash_in_log(tail) if rc != 0 else None)
+            if crash:
+                # The driver is suspect until Windows reboots: relaunching on
+                # it hung for 2 h on 2026-11-12. Re-queue (tiles are kept) and
+                # block the queue until a reboot clears the flag.
+                reason = gpu_fault or f"GPU driver crashed ({crash})"
+                st = qm.load_state()
+                gpu_health.mark_needs_reboot(st, reason)
+                qm.save_state(st)
+                note = f"{reason}. Re-queued; reboot the PC to continue."
+                requeue = True
         with self._lock:
             adopted, self._adopted = self._adopted, False
         if adopted and state == qm.FAILED:
@@ -608,6 +661,8 @@ class Runner:
             qm.set_state(job_id, state,
                          note=(f"adopted render: {note}" if adopted and note
                                else ("adopted render finished" if adopted else note)))
+            if requeue:
+                qm.resume(job_id)       # waits at the front; the gate holds it
 
         st = qm.load_state()
         st["running"]     = None

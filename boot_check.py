@@ -57,6 +57,14 @@ def interrupted_job():
 def main():
     job = interrupted_job()
     if job is None:
+        # Or a job held back after a GPU crash: this reboot is what it waited for.
+        try:
+            st = qm.load_state()
+            if st.get("gpu_needs_reboot"):
+                job = qm.next_queued()
+        except Exception:
+            job = None
+    if job is None:
         print("nothing was rendering - Rendafar stays off")
         return 0
 
