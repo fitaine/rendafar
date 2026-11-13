@@ -499,7 +499,7 @@ class NewRenderDialog(QtWidgets.QDialog):
                   for s in (getattr(self, "_info", {}) or {}).get("scenes") or []}
         multi_scene = len({s for s, _ in picked}) > 1
 
-        made, failed = [], None
+        made, failed, warnings = [], None, []
         for scene, cam in picked:
             body = {"blend": blend, "kind": "still",
                     "name": f"{stem} · {scene}/{cam}" if multi_scene
@@ -521,6 +521,9 @@ class NewRenderDialog(QtWidgets.QDialog):
                 failed = d["error"]
                 break
             made.append(d["job"]["name"])
+            # Once each: cameras of one scene all carry the same caveat.
+            if d.get("warning") and d["warning"] not in warnings:
+                warnings.append(d["warning"])
 
         if failed:
             QtWidgets.QMessageBox.warning(
@@ -530,8 +533,11 @@ class NewRenderDialog(QtWidgets.QDialog):
             if made:
                 self.accept()
             return
+        text = f"{len(made)} jobs queued:\n\n" + "\n".join(made)
+        if warnings:
+            text += "\n\n" + "\n\n".join(warnings)
         QtWidgets.QMessageBox.information(
-            self, "Added", f"{len(made)} jobs queued:\n\n" + "\n".join(made))
+            self, "Added, with a caveat" if warnings else "Added", text)
         self.accept()
 
     def create(self):

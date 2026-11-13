@@ -23,6 +23,7 @@ import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import blend_info
 import paths
 
 from . import api, theme
@@ -37,7 +38,8 @@ COLUMNS = [
     # Wide enough for a tiled render's assembled size: "120000×120000" is 13
     # mono characters, where a classic render's "4000×4000" is 9.
     ("resolution", "Resolution",  116),
-    ("samples",    "Samples",     62),
+    # Room for "4096 · CPU", the flag for a render left on the CPU.
+    ("samples",    "Samples",     86),
     ("frames",     "Frames",      74),
     ("format",     "Format",      62),
     ("filename",   "Filename",    132),
@@ -504,8 +506,13 @@ class JobsTable(QtWidgets.QTableWidget):
             samples = str(sinfo.get("samples") or "—")
             fmt = cfg.get("FILE_FORMAT") or sinfo.get("file_format") or "—"
         self._cell(row, "resolution", res, mono=True, locked_why=res_why)
-        self._cell(row, "samples", samples, mono=True,
-                   locked_why="Comes from the .blend — never overridden")
+        cpu = None if unknown else blend_info.cpu_warning(
+            info, job.get("type"), cfg)
+        item = self._cell(row, "samples", f"{samples} · CPU" if cpu else samples,
+                          mono=True,
+                          locked_why=cpu or "Comes from the .blend — never overridden")
+        if cpu:
+            item.setForeground(QtGui.QColor(theme.ALERT))
 
         self._cell(row, "frames", self._frames_text(job, sinfo, unknown), mono=True,
                    editable=can_edit and classic, job=job,

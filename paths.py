@@ -142,6 +142,29 @@ def split_output(value, job_type):
     return {"OUTPUT_DIR": parent, "RENDER_NAME": name}
 
 
+def output_problem(output, source="The output"):
+    """
+    Why Blender could not save to this output path, or None if it can.
+
+    A path with no drive — "Chamechaude.tif_Camera_", or Blender's own default
+    "/tmp\\" — is resolved against whatever folder Blender was started from,
+    which for the app is C:\\. Windows refuses writes there, and Blender only
+    finds out at the very end: a 10 minute render was thrown away exactly
+    like this, with "output : C:\\" printed at the start for anyone watching.
+    "//" is fine; it means "beside the .blend".
+    """
+    p = (output or "").strip().strip('"')
+    if p.startswith("//"):
+        return None
+    drive, rest = os.path.splitdrive(p)
+    if drive and rest.startswith(("\\", "/")):
+        return None
+    return (f"{source} is {p!r}, which has no folder, so Blender would try to "
+            f"save to the root of C:\\ and fail after rendering. Give it a full "
+            f"folder (C:\\...\\renders\\name_), or start it with // to save "
+            f"beside the .blend.")
+
+
 def unique_classic_output(base, cfg, name, taken=()):
     """
     An output path for a classic job that no other job can write over.

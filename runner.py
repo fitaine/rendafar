@@ -222,6 +222,10 @@ def kill_tree(pid):
         pass
 
 
+class BadOutput(ValueError):
+    """A job refused at start because Blender could not save its output."""
+
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 class Runner:
@@ -302,6 +306,15 @@ class Runner:
             if not os.path.isfile(job["script"]):
                 raise FileNotFoundError(
                     f"pinned render script missing: {job['script']}")
+            if job.get("type") == "classic":
+                # Jobs queued before the check existed, or whose .blend was
+                # re-saved since. Failed with the reason rather than rendered
+                # for nothing; the controller moves on to the next job.
+                import blend_info
+                bad = blend_info.output_problem(job["blend"], job.get("config"))
+                if bad:
+                    qm.set_state(job_id, qm.FAILED, note=bad)
+                    raise BadOutput(bad)
 
             config.ensure_dirs()
             job_file = qm.job_path(job_id)

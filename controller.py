@@ -8,7 +8,7 @@ import threading
 
 import config
 import queue_manager as qm
-from runner import Runner, pid_alive, kill_tree
+from runner import BadOutput, Runner, pid_alive, kill_tree
 
 
 class Controller:
@@ -84,10 +84,17 @@ class Controller:
         with self._lock:
             if self.runner.is_busy():
                 return None
-            job = qm.next_queued()
-            if job is None:
-                return None
-            started = self.runner.start(job["id"])
+            while True:
+                job = qm.next_queued()
+                if job is None:
+                    return None
+                try:
+                    started = self.runner.start(job["id"])
+                    break
+                except BadOutput:
+                    # Already marked failed, with the reason. One bad path
+                    # must not leave the GPU idle for the rest of the queue.
+                    self.notify(qm.FAILED, qm.load_job(job["id"]))
         self.notify("started", started)
         return started
 

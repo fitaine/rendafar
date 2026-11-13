@@ -91,6 +91,53 @@ print("%s" + json.dumps(info) + "%s")
 """ % (MARK, MARK)
 
 
+def scene_info(info, cfg):
+    """The settings of the scene a job will render: its SCENE, else the active one."""
+    scenes = info.get("scenes") or []
+    chosen = (cfg or {}).get("SCENE") or info.get("active_scene") or info.get("scene")
+    # Falls back to `info` itself for an entry cached without the per-scene list.
+    return next((s for s in scenes if s.get("scene") == chosen), info)
+
+
+def cpu_warning(info, job_type, cfg):
+    """
+    A sentence if this job would render on the CPU without anyone asking it to,
+    else None.
+
+    Old .blends and slips leave Cycles on CPU, and the classic script obeys the
+    .blend, so the render just runs many times slower with nothing to say why.
+    Only the unasked-for case is flagged: a job whose DEVICE says CPU chose it,
+    and the tiled script switches to GPU itself (USE_GPU).
+    """
+    cfg = cfg or {}
+    if job_type != "classic" or cfg.get("DEVICE") or info.get("error"):
+        return None
+    s = scene_info(info, cfg)
+    if s.get("engine") != "CYCLES" or s.get("device") != "CPU":
+        return None
+    return (f"Scene {s.get('scene') or '?'} is set to render on the CPU. "
+            f"Switch Cycles' Device to GPU Compute in the .blend and save it, "
+            f"or it will render on the CPU.")
+
+
+def output_problem(blend, cfg, info=None):
+    """
+    Why a classic job's output cannot be saved, or None.
+
+    The job's own OUTPUT_DIR if it has one, else the .blend's path for the
+    chosen scene. A .blend that cannot be read is not blocked on: the check
+    exists to stop a known-bad path, not to stop every render it is unsure of.
+    """
+    out = (cfg or {}).get("OUTPUT_DIR")
+    if out:
+        return paths.output_problem(out, "This job's Output")
+    info = info if info is not None else read(blend)
+    if info.get("error"):
+        return None
+    return paths.output_problem(scene_info(info, cfg).get("filepath"),
+                                "The .blend's output path")
+
+
 def _cache_path(blend):
     try:
         mtime = os.path.getmtime(blend)

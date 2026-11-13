@@ -552,6 +552,13 @@ class Handler(BaseHTTPRequestHandler):
                 cfg.pop(key, None)          # empty means "back to the .blend"
             else:
                 cfg[key] = value
+        # Checked before saving, so a bad Output never reaches the queue.
+        # SCENE counts too: with no Output set, the scene decides the path.
+        if job.get("type") == "classic" and changes.keys() & {"OUTPUT_DIR", "SCENE"}:
+            import blend_info
+            bad = blend_info.output_problem(job["blend"], cfg)
+            if bad:
+                raise ValueError(bad)
         job["config"] = cfg
         qm.save_job(job)
         # A hand-typed folder is the usual way two jobs come to share an output,
@@ -637,6 +644,14 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("scene"):
             cfg["SCENE"] = str(body["scene"])
 
+        if job_type == "classic":
+            # Refused, not warned: a path Blender cannot save to costs the
+            # whole render, and a queue runs unattended.
+            import blend_info
+            bad = blend_info.output_problem(blend, cfg)
+            if bad:
+                raise ValueError(bad)
+
         job = qm.create_job(blend, name=(body.get("name") or None),
                             job_type=job_type, cfg=cfg)
         if job_type == "classic":
@@ -653,6 +668,13 @@ class Handler(BaseHTTPRequestHandler):
                 warn = (f"{n} tiles already exist in {out} — this job will "
                         f"resume into that folder. Use a different render name "
                         f"for a separate render.")
+        if job_type == "classic":
+            # Cached by path and mtime, and the dialog has usually just read it.
+            import blend_info
+            cpu = blend_info.cpu_warning(blend_info.read(blend), job_type,
+                                         job.get("config"))
+            if cpu:
+                warn = f"{warn}\n\n{cpu}" if warn else cpu
         return self._json({"job": job, "output_dir": out, "warning": warn})
 
     def _quit(self, force=False):
