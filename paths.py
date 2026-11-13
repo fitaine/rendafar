@@ -352,7 +352,9 @@ def progress(job):
     if m.get("kind") == "frames":
         total, done = m.get("total") or 0, m.get("frames_done") or 0
         times = [t for t in (m.get("frame_times") or {}).values() if t and t > 0]
-        unit  = "frames"
+        # A tiled still keeps the frames manifest shape but its entries are
+        # tiles; it says so in "unit", and every label must follow.
+        unit  = m.get("unit") if m.get("unit") in ("tiles", "frames") else "frames"
     else:
         total = (m.get("cols") or 0) * (m.get("rows") or 0)
         done  = m.get("tiles_done") or 0

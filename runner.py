@@ -69,6 +69,26 @@ def _clock_to_s(text):
     return total
 
 
+def human_duration(s):
+    """3h 01m, 12m, 1d 2h 03m. No seconds (he finds them useless)."""
+    m_total = int(round(s / 60))
+    d, rest = divmod(m_total, 1440)
+    h, m = divmod(rest, 60)
+    if d:
+        return f"{d}d {h}h {m:02d}m"
+    if h:
+        return f"{h}h {m:02d}m"
+    return f"{m}m" if m else "<1m"
+
+
+def humanize_line(line):
+    """Blender's 'Remaining: 03:01:22.70' shown as 'Remaining: 3h 01m 22s'."""
+    def sub(mt):
+        secs = _clock_to_s(mt.group(1))
+        return f"Remaining: {human_duration(secs)}" if secs is not None else mt.group(0)
+    return _RE_REMAIN.sub(sub, line) if "Remaining:" in line else line
+
+
 def parse_progress_line(line):
     """
     Cycles' live progress from one stdout line, or None.
@@ -624,7 +644,7 @@ class Runner:
                         with self._lock:
                             if self._proc is not proc:
                                 return
-                            self._buffer.append(line)
+                            self._buffer.append(humanize_line(line))
                             if live:
                                 self._live = live
                     continue
