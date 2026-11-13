@@ -23,6 +23,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+import health
 
 BASE = f"http://127.0.0.1:{config.PORT}"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -34,10 +35,15 @@ class ServerDown(Exception):
 
 # ── Process ──────────────────────────────────────────────────────────────────
 
-def port_open(timeout=0.6):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(timeout)
-        return s.connect_ex(("127.0.0.1", config.PORT)) == 0
+def port_open(timeout=1.5):
+    """
+    True only when Rendafar answers on the port — not merely something.
+
+    This used to be a bare TCP connect. A foreign server on 8765 then passed
+    for ours, ensure_server() skipped starting server.py, and every call here
+    went to the stranger. See health.py.
+    """
+    return health.server_alive(timeout)
 
 
 def start_server():

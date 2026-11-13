@@ -18,21 +18,25 @@ no GPU.  This must be invisible on an ordinary morning.
 """
 
 import os
-import socket
 import subprocess
 import sys
 
 import config
+import health
 import queue_manager as qm
 
 LAUNCHER = os.path.join(config.APP_DIR, "RUN SERVER LOOP.bat")
 
 
 def already_running():
-    """True if something is already listening on the app's port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.7)
-        return s.connect_ex(("127.0.0.1", config.PORT)) == 0
+    """
+    True if Rendafar itself is already up.
+
+    Not "is the port open": an unrelated server on config.PORT would have made
+    this say yes, and this function's yes means an interrupted render is left
+    for someone else to resume — which is to say, never. See health.py.
+    """
+    return health.server_alive()
 
 
 def interrupted_job():
