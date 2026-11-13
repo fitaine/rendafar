@@ -28,32 +28,38 @@ class Controller:
         so it is visibly distinct from a job the user stopped on purpose.
 
         If the old Blender process is STILL alive (the server crashed, Blender
-        didn't), it is killed too: this process has no pipe to its stdout and
-        no way to finalise it, and leaving it would allow a second render to
-        start beside it.  Killing costs at most one tile; the resume that
-        follows re-renders it supervised.
+        didn't), it is ADOPTED, not killed: the render carries on and the
+        runner settles the job from the manifest when it ends. Killing it used
+        to cost "at most one tile", but a still is one tile, and on 2026-11-11
+        that threw away 4h25 of a 5 h render. While it runs the runner counts
+        as busy, so no second render can start beside it.
 
-        Returns the list of job ids that were found interrupted.
+        Returns the list of job ids that were found interrupted (adopted ones
+        are not: they are still running).
         """
         config.ensure_dirs()
         found = []
+        adopted = None
         with self._lock:
             st  = qm.load_state()
             pid = st.get("running_pid")
             for job in qm.all_jobs():
                 if job["state"] != qm.RUNNING:
                     continue
-                note = "no live render process at startup"
-                if job["id"] == st.get("running") and pid_alive(pid):
-                    kill_tree(pid)
-                    note = ("orphaned render killed at startup (server had "
-                            "crashed; the render could no longer be supervised)")
-                qm.set_state(job["id"], qm.INTERRUPTED, note=note)
+                if (adopted is None and job["id"] == st.get("running")
+                        and pid_alive(pid)):
+                    self.runner.adopt(job["id"], pid)
+                    adopted = job["id"]
+                    continue
+                qm.set_state(job["id"], qm.INTERRUPTED,
+                             note="no live render process at startup")
                 found.append(job["id"])
-            if found:
+            if found and adopted is None:
                 st["running"] = None
                 st["running_pid"] = None
                 qm.save_state(st)
+        if adopted:
+            self.notify("adopted", qm.load_job(adopted))
 
         for job_id in found:
             self.notify("interrupted", qm.load_job(job_id))

@@ -124,13 +124,27 @@ st = qm.load_state(); st["running"] = j2["id"]; st["running_pid"] = orphan.pid
 qm.save_state(st)
 
 events.clear()
+config.AUTO_START_NEXT, _auto = False, config.AUTO_START_NEXT   # no real render on settle
 found = c.recover()
-time.sleep(2)
-check("orphan detected as interrupted", found == [j2["id"]]
-      and qm.load_job(j2["id"])["state"] == qm.INTERRUPTED)
-check("orphan blender was killed", not pid_alive(orphan.pid))
-note = (qm.load_job(j2["id"])["history"][-1].get("note") or "")
-check("history explains the kill", "orphan" in note.lower(), note)
+check("orphan is NOT treated as interrupted", found == [], found)
+check("orphan job stays running", qm.load_job(j2["id"])["state"] == qm.RUNNING)
+check("orphan blender left alive", pid_alive(orphan.pid))
+check("runner counts as busy (no 2nd render beside it)", c.runner.is_busy())
+check("adoption was notified", "adopted" in events, events)
+check("no second render can start", c.start_next() is None)
+c.runner._proc._interval = 1
+orphan.kill(); orphan.wait()
+for _ in range(40):
+    if not c.runner.is_busy() and qm.load_job(j2["id"])["state"] != qm.RUNNING:
+        break
+    time.sleep(1)
+time.sleep(1)
+j2s = qm.load_job(j2["id"])
+check("unfinished adopted render is re-queued", j2s["state"] == qm.QUEUED, j2s["state"])
+note = " ".join(h.get("note") or "" for h in j2s["history"][-3:])
+check("history explains the adoption", "adopted" in note.lower(), note)
+check("runner free again", not c.runner.is_busy())
+config.AUTO_START_NEXT = _auto
 
 print("\n=== 5. recover_and_resume auto-starts ONLY after an interruption ===")
 qm.set_state(j2["id"], qm.INTERRUPTED)      # still interrupted from above

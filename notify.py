@@ -147,7 +147,7 @@ def send_photo(image_bytes, caption):
 # ── Event formatting ─────────────────────────────────────────────────────────
 
 _ICON = {"done": "✅", "failed": "❌", "interrupted": "⚡",
-         "started": "▶️", "stopped": "■", "resumed_after_boot": "🔁"}
+         "started": "▶️", "stopped": "■", "resumed_after_boot": "🔁", "adopted": "🤝"}
 
 
 def hms(seconds):
@@ -320,6 +320,9 @@ def job_event(event, job, note=None):
     elif event == "interrupted":
         text = (f"{icon} {name} was interrupted{where} — no live render "
                 f"process found at startup (power cut or crash).")
+    elif event == "adopted":
+        text = (f"{icon} Server restarted — {name} was still rendering and was "
+                f"left running. No live progress until it ends.")
     elif event == "resumed_after_boot":
         text = f"{icon} Auto-resumed after reboot — {name}{where}"
     elif event == "started":

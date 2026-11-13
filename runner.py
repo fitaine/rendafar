@@ -222,6 +222,34 @@ def kill_tree(pid):
         pass
 
 
+class AdoptedProcess:
+    """
+    A Blender left running by a server that crashed, wrapped so the Runner can
+    supervise it like one it started: same poll() / wait() / pid.
+
+    There is no pipe to its stdout any more, so no live progress, and its exit
+    code is unknowable. wait() returns 0 and _outcome() decides from the
+    manifest, which the render script writes BEFORE printing anything, so a
+    render whose stdout is dead still records its image correctly.
+    """
+    stdout = None
+
+    def __init__(self, pid, interval=10):
+        self.pid = pid
+        self._interval = interval
+        self._done = False
+
+    def poll(self):
+        if not self._done and not pid_alive(self.pid):
+            self._done = True
+        return 0 if self._done else None
+
+    def wait(self):
+        while self.poll() is None:
+            time.sleep(self._interval)
+        return 0
+
+
 class BadOutput(ValueError):
     """A job refused at start because Blender could not save its output."""
 
@@ -239,6 +267,7 @@ class Runner:
         self._buffer   = deque(maxlen=config.LOG_BUFFER_LINES)
         self._logfile  = None
         self._live     = None       # progress inside the current frame/tile
+        self._adopted  = False      # supervising a render a crashed server left
         self.on_finish = on_finish      # called (job_id, final_state)
 
     # ── status ───────────────────────────────────────────────────────────
@@ -394,6 +423,39 @@ class Runner:
             threading.Thread(target=self._watch, daemon=True).start()
             return job
 
+    def adopt(self, job_id, pid):
+        """
+        Take over a render that outlived a crashed server, instead of killing
+        it. Killing threw away 4h25 of a 5 h still on 2026-11-11.
+
+        The render carries on untouched; this only watches for it to end and
+        then settles the job from the manifest, exactly as for a render this
+        server started. No live progress (its stdout pipe died with the old
+        server), so the job log gets a note saying why it has gone quiet.
+        """
+        with self._lock:
+            if self.is_busy():
+                raise RuntimeError(f"already rendering {self._job_id}")
+            log_path = os.path.join(config.LOGS_DIR, f"{job_id}.log")
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n{'=' * 70}\nADOPTED {qm._now()}  pid {pid}\n"
+                            "  The server restarted while this render was running.\n"
+                            "  The render was left alone; no live progress until it ends.\n"
+                            f"{'=' * 70}\n")
+            except OSError:
+                pass
+            self._proc     = AdoptedProcess(pid)
+            self._job_id   = job_id
+            self._stopping = False
+            self._stop_after = False
+            self._started  = time.time()
+            self._buffer.clear()
+            self._buffer.append("(render adopted after a server restart: no live log)")
+            self._live     = None
+            self._adopted  = True
+            threading.Thread(target=self._watch, daemon=True).start()
+
     # ── stop ─────────────────────────────────────────────────────────────
 
     def stop(self, after_current=False):
@@ -499,6 +561,8 @@ class Runner:
     def _pump(self):
         """Tee Blender's stdout to the live buffer and the job log."""
         proc = self._proc
+        if proc.stdout is None:
+            return      # adopted render: nothing to read
         try:
             for line in proc.stdout:
                 line = line.rstrip("\r\n")
@@ -527,7 +591,19 @@ class Runner:
                 self._logfile = None
 
         state, note = self._outcome(job_id, rc, stopping)
-        qm.set_state(job_id, state, note=note)
+        with self._lock:
+            adopted, self._adopted = self._adopted, False
+        if adopted and state == qm.FAILED:
+            # Its exit code is unknown, so an unfinished manifest is not proof
+            # of a failure: re-queue it so the remaining work resumes.
+            qm.set_state(job_id, qm.INTERRUPTED,
+                         note=f"adopted render ended unfinished ({note})")
+            qm.resume(job_id)
+            state = qm.INTERRUPTED
+        else:
+            qm.set_state(job_id, state,
+                         note=(f"adopted render: {note}" if adopted and note
+                               else ("adopted render finished" if adopted else note)))
 
         st = qm.load_state()
         st["running"]     = None
