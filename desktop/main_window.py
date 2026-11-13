@@ -629,6 +629,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue.customContextMenuRequested.connect(self._queue_menu)
         self.queue.error.connect(
             lambda msg: self.statusBar().showMessage(msg, 8000))
+        self.queue.refused.connect(
+            lambda msg: self.warn(f"That change was not made.\n\n{msg}"))
         p.lay.addWidget(self.queue, 1)
 
         row = QtWidgets.QHBoxLayout()

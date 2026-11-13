@@ -165,7 +165,7 @@ def output_problem(output, source="The output"):
             f"beside the .blend.")
 
 
-def unique_classic_output(base, cfg, name, taken=()):
+def unique_classic_output(base, cfg, name, taken=(), typed=False):
     """
     An output path for a classic job that no other job can write over.
 
@@ -189,6 +189,11 @@ def unique_classic_output(base, cfg, name, taken=()):
     The result is stored on the job, so it stays put across resumes — which
     SKIP_EXISTING depends on, since it decides what to re-render by looking for
     files at exactly this path.
+
+    `typed` is a filename someone just wrote in the Filename cell. It is kept
+    as written, only numbered if another job already has it: folding the camera
+    in turned "print_" into "print_Camera_main_", and retyping the name the
+    cell showed doubled the camera every time.
     """
     base = (base or "").strip().strip('"')
     stem = cfg.get("CAMERA") or cfg.get("SCENE") or name or "render"
@@ -196,6 +201,12 @@ def unique_classic_output(base, cfg, name, taken=()):
 
     if not base:
         return ""                    # nothing to anchor to: the .blend decides
+    if typed and not base.endswith(("/", "\\")):
+        out, n = base, 2
+        while out in set(taken):
+            out = f"{base.rstrip('_-')}_{n}_"
+            n += 1
+        return out
     if base.endswith(("/", "\\")):
         head = base
     elif os.path.isdir(base):

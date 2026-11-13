@@ -514,6 +514,20 @@ class Handler(BaseHTTPRequestHandler):
             allowed &= supported
         changes = dict(body.get("config") or {})
 
+        # What the job writes to now: its own Output, else the .blend's path,
+        # which is what the table shows in both cells. Splitting only the
+        # job's Output lost the folder whenever it had none: renaming the file
+        # produced a bare "Chamechaude_…" that Blender saved to C:\ — twice,
+        # with a 10 minute render thrown away the first time.
+        current = (job.get("config") or {}).get("OUTPUT_DIR")
+        if not current and job.get("type") == "classic" \
+                and changes.keys() & {"_OUTPUT", "_FILENAME"}:
+            import blend_info
+            info = blend_info.read(job["blend"])
+            if not info.get("error"):
+                current = blend_info.scene_info(
+                    info, job.get("config")).get("filepath")
+
         # "_OUTPUT" is the folder as the UI shows it. Translating it here means
         # the split lives in one place and every front end gets it right.
         if "_OUTPUT" in changes:
@@ -522,8 +536,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Keep whatever filename is already set: changing the folder
                 # should move the render, not silently rename the file back to
                 # a bare frame number.
-                _old_folder, keep = paths.split_classic_output(
-                    (job.get("config") or {}).get("OUTPUT_DIR"))
+                _old_folder, keep = paths.split_classic_output(current)
                 changes["OUTPUT_DIR"] = paths.join_classic_output(
                     new_folder, keep)
             else:
@@ -537,8 +550,7 @@ class Handler(BaseHTTPRequestHandler):
             # that is what the cell shows — "Camera_main_0001.png". Strip them,
             # or they would end up baked into every filename.
             typed = re.sub(r"\d{4}\.\w+$", "", typed.strip())
-            folder, _old = paths.split_classic_output(
-                (job.get("config") or {}).get("OUTPUT_DIR"))
+            folder, _old = paths.split_classic_output(current)
             changes["OUTPUT_DIR"] = paths.join_classic_output(folder, typed)
         for key in changes:
             if key not in allowed:
@@ -564,11 +576,12 @@ class Handler(BaseHTTPRequestHandler):
         # A hand-typed folder is the usual way two jobs come to share an output,
         # so the same guarantee applies here as at creation.
         if job.get("type") == "classic" and "OUTPUT_DIR" in changes:
-            job = self._make_output_unique(job)
+            job = self._make_output_unique(
+                job, typed="_FILENAME" in (body.get("config") or {}))
         return self._json({"job": job})
 
     @staticmethod
-    def _make_output_unique(job):
+    def _make_output_unique(job, typed=False):
         """
         Give a classic job an output nothing else writes over, and save it.
 
@@ -590,7 +603,8 @@ class Handler(BaseHTTPRequestHandler):
         taken = {(j.get("config") or {}).get("OUTPUT_DIR")
                  for j in qm.all_jobs()
                  if j["id"] != job["id"] and j.get("type") == "classic"}
-        fixed = paths.unique_classic_output(base, cfg, job.get("name"), taken)
+        fixed = paths.unique_classic_output(base, cfg, job.get("name"), taken,
+                                            typed=typed)
         if fixed and fixed != base:
             cfg["OUTPUT_DIR"] = fixed
             job["config"] = cfg

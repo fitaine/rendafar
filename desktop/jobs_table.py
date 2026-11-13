@@ -203,6 +203,9 @@ class JobsTable(QtWidgets.QTableWidget):
 
     changed = QtCore.Signal()            # something was edited; refresh
     error = QtCore.Signal(str)
+    # An edit the server turned down. Shown as a dialog, not in the status
+    # bar: a refused rename looked exactly like Enter doing nothing.
+    refused = QtCore.Signal(str)
     reordered = QtCore.Signal(list)      # the queue, dragged into a new order
 
     def dropEvent(self, event):
@@ -663,9 +666,9 @@ class JobsTable(QtWidgets.QTableWidget):
         try:
             d = api.edit_job(job_id, changes)
         except api.ServerDown as e:
-            return self.error.emit(str(e))
+            return self.refused.emit(str(e))
         if d.get("error"):
-            return self.error.emit(d["error"])
+            return self.refused.emit(d["error"])
         self.changed.emit()
 
     @staticmethod

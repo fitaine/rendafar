@@ -173,5 +173,44 @@ check("the queue moved past the first to reach the second",
       [e for e in told] == [(qm.FAILED, bad1["id"]), (qm.FAILED, bad2["id"])], told)
 check("Blender was never launched", not c.runner.is_busy())
 
+print("\n=== 6. renaming the file keeps the folder shown ===")
+# How jobs 45 and 46 got their bare "Chamechaude_…" Output: the job had none
+# of its own, the table showed the .blend's folder, and renaming the file
+# split the job's (empty) Output instead — dropping the folder entirely.
+BLEND_PATH["value"] = "C:\\Users\\T\\Pictures\\Chame\\"
+CAM = "Camera.002 (the print one)"
+
+
+def fresh(cfg):
+    return qm.create_job(BLEND, job_type="classic",
+                         cfg=dict({"MODE": "still", "CAMERA": CAM,
+                                   "SCENE": "Scene"}, **cfg))["id"]
+
+
+def out_after(job_id, change):
+    _, err = edit(job_id, change)
+    return err or qm.load_job(job_id)["config"].get("OUTPUT_DIR")
+
+
+got = out_after(fresh({}), {"_FILENAME": "Chamechaude_"})
+check("with no Output, the new name lands in the .blend's folder",
+      got == "C:\\Users\\T\\Pictures\\Chame\\Chamechaude_", got)
+got = out_after(fresh({}), {"_OUTPUT": "D:\\prints"})
+check("with no Output, a new folder is accepted",
+      got.startswith("D:\\prints\\"), got)
+
+jid = fresh({"OUTPUT_DIR": "C:\\r\\Camera.002_the_print_one_"})
+got = out_after(jid, {"_FILENAME": "print_"})
+check("a typed name is kept as typed — no camera folded in",
+      got == "C:\\r\\print_", got)
+got = out_after(jid, {"_FILENAME": "print_0001.tif"})
+check("retyping the name the cell shows does not grow it",
+      got == "C:\\r\\print_", got)
+
+other = fresh({"OUTPUT_DIR": "C:\\r\\a_"})
+got = out_after(other, {"_FILENAME": "print_"})
+check("a name another job already uses is numbered, not shared",
+      got == "C:\\r\\print_2_", got)
+
 print(f"\n{'=' * 62}\n  {sum(results)}/{len(results)} passed\n{'=' * 62}")
 sys.exit(0 if all(results) else 1)
