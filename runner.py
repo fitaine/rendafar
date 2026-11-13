@@ -175,6 +175,10 @@ def cli_still_frame(job):
     cfg = job.get("config") or {}
     if cfg.get("MODE") != "still":
         return None
+    # A tiled still loops over its tiles inside the script; "-f" would render
+    # the whole frame a second time on top.
+    if cfg.get("TILE_SIZE"):
+        return None
 
     # The pinned script has to understand the handshake. Older snapshots would
     # ignore RENDAFAR_CLI_RENDER, run their own loop, and then Blender's "-f"

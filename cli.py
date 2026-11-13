@@ -115,6 +115,10 @@ def cmd_classic(a):
         cfg["OUTPUT_DIR"] = a.output
     if a.device:
         cfg["DEVICE"] = a.device
+    if a.tiles:
+        if cfg["MODE"] != "still":
+            raise SystemExit("--tiles only applies to a still")
+        cfg["TILE_SIZE"] = a.tiles
 
     job = qm.create_job(a.blend, name=a.name, job_type="classic", cfg=cfg)
     print(f"  {job['id']}  {job['name']}   [classic / {cfg['MODE']}]")
@@ -280,6 +284,8 @@ def main():
     a.add_argument("--step", type=int)
     a.add_argument("--camera", help="override the scene camera by name")
     a.add_argument("--output", help="override the output folder")
+    a.add_argument("--tiles", type=int, default=0, metavar="PX",
+                   help="still only: render in tiles of about PX pixels, resume-safe")
     a.add_argument("--device", choices=["GPU", "CPU"],
                    help="override the .blend's compute device")
 

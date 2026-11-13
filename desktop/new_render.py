@@ -272,6 +272,18 @@ class NewRenderDialog(QtWidgets.QDialog):
                                 special="the scene's current frame")
         f.addRow("Frame", self.frame)
 
+        # Cut into tiles so a power cut costs one tile, Stop can wait for the
+        # tile in flight, and the first tiles can be checked early.
+        self.tile_size = self._spin(0, 20000, value=1000, step=250, suffix=" px",
+                                    special="off, one render")
+        self.tile_size.setToolTip(
+            "Render the still in tiles of about this size, saved as they finish.\n"
+            "A power cut or a Stop loses one tile, not the whole render, and you\n"
+            "can check the first tiles while the rest render. The scene's\n"
+            "compositor (Denoise, Glare...) runs once on the assembled image,\n"
+            "so the result matches a normal render. 0 = one render, as F12.")
+        f.addRow("Tiles", self.tile_size)
+
         # Tick the cameras wanted and get one job each, rather than adding the
         # file once and then duplicating it and changing the camera by hand.
         # Scenes are the top level because a camera only means anything inside
@@ -481,6 +493,8 @@ class NewRenderDialog(QtWidgets.QDialog):
         else:
             if self.frame.value():
                 body["frame"] = self.frame.value()
+            if self.tile_size.value():
+                body["tile_size"] = self.tile_size.value()
             # One ticked camera still goes through here; the tick has to count,
             # or picking a camera and pressing Add would silently render the
             # scene's default one.
@@ -512,6 +526,8 @@ class NewRenderDialog(QtWidgets.QDialog):
                     "output_dir": (scenes.get(scene) or {}).get("filepath", "")}
             if self.frame.value():
                 body["frame"] = self.frame.value()
+            if self.tile_size.value():
+                body["tile_size"] = self.tile_size.value()
             try:
                 d = api.new_job(body)
             except api.ServerDown as e:

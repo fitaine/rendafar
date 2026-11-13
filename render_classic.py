@@ -62,6 +62,13 @@ FILE_FORMAT   = ""
 DEVICE         = ""
 COMPUTE_DEVICE = "OPTIX"     # only consulted when DEVICE == "GPU"
 
+# Tiled still: 0 = off (one render, as F12).  >0 = cut the still into tiles of
+# about this many pixels a side, render each as a border crop of the REAL
+# camera (no zoom, no shift: the framing cannot drift), save each tile as soon
+# as it is done, then stitch and run the scene's own compositor ONCE on the
+# whole image. A power cut costs one tile, not the night. See render_tiled_still.
+TILE_SIZE     = 0
+
 # NOTE: there is deliberately no SAMPLES, RESOLUTION, FILE_FORMAT or
 # OUTPUT_FILE setting here.  Those belong to the .blend.
 
@@ -79,7 +86,7 @@ _JOB_OVERRIDABLE = {
     "SCENE",
     "MODE", "FRAME", "FRAME_START", "FRAME_END", "FRAME_STEP",
     "OUTPUT_DIR", "CAMERA", "SKIP_EXISTING", "DEVICE", "COMPUTE_DEVICE",
-    "FILE_FORMAT",
+    "FILE_FORMAT", "TILE_SIZE",
 }
 
 JOB      = {}
@@ -224,6 +231,403 @@ def setup_device(scene):
               flush=True)
 
 
+# ── tiled still ─────────────────────────────────────────────────────────────
+#
+# Why border crops and not the camera-shift tiling of render_tiles_unlimited:
+# a border crop renders exactly the pixels F12 would, through the scene's own
+# camera, untouched. Cycles seeds its noise from the pixel's position in the
+# FULL frame, so even the noise of a tile matches the one-go render; there is
+# nothing at a tile edge for a seam to come from.
+#
+# What does seam is the compositor (Denoise, Glare read neighbouring pixels),
+# so tiles are rendered RAW into multilayer EXR, with every pass the scene
+# writes, and the scene's own compositor runs once on the stitched image.
+
+def _tile_bounds(W, H, size):
+    cols = max(1, -(-W // size))
+    rows = max(1, -(-H // size))
+    xs = [round(k * W / cols) for k in range(cols + 1)]
+    ys = [round(k * H / rows) for k in range(rows + 1)]
+    return cols, rows, xs, ys
+
+
+def _tile_name(row, col):
+    return f"tile_r{row:02d}_c{col:02d}.exr"
+
+
+def _update_preview(tile_dir, tiles, W, H, view_layer):
+    """Quarter-size JPEG of the tiles done so far. Approximate colour (plain
+    sRGB, not the scene's view transform): it is for checking, not judging."""
+    import OpenImageIO as oiio
+    from OpenImageIO import ImageBufAlgo as iba
+    k = 4
+    pw, ph = max(1, W // k), max(1, H // k)
+    prev = oiio.ImageBuf(oiio.ImageSpec(pw, ph, 3, oiio.FLOAT))
+    for (x0, y0, x1, y1), path in tiles:
+        if not os.path.isfile(path):
+            continue
+        tb = oiio.ImageBuf(path)
+        names = list(tb.spec().channelnames)
+        want = [f"{view_layer}.Combined.{c}" for c in "RGB"]
+        if not all(n in names for n in want):
+            want = [n for n in names if n.endswith(("Combined.R", "Combined.G", "Combined.B"))][:3]
+        rgb = iba.channels(tb, tuple(names.index(n) for n in want))
+        tw, th = max(1, (x1 - x0) // k), max(1, (y1 - y0) // k)
+        small = iba.resize(rgb, roi=oiio.ROI(0, tw, 0, th, 0, 1, 0, 3))
+        iba.paste(prev, x0 // k, y0 // k, 0, 0, small)
+    prev = iba.colorconvert(prev, "linear", "sRGB")
+    out = os.path.join(tile_dir, "preview.jpg")
+    tmp = os.path.join(tile_dir, "preview_tmp.jpg")
+    prev.write(tmp, "uint8")
+    os.replace(tmp, out)
+    return out
+
+
+def _stitch(tiles, W, H, out_path):
+    """Paste the raw tiles into one multilayer EXR, every channel kept."""
+    import OpenImageIO as oiio
+    from OpenImageIO import ImageBufAlgo as iba
+    first = oiio.ImageBuf(tiles[0][1])
+    spec = oiio.ImageSpec(first.spec())
+    names = list(spec.channelnames)
+    spec.width, spec.height = W, H
+    spec.full_width, spec.full_height = W, H
+    spec.x = spec.y = spec.full_x = spec.full_y = 0
+    spec.tile_width = spec.tile_height = 0
+    spec.set_format(oiio.HALF)
+    full = oiio.ImageBuf(spec)
+    for (x0, y0, x1, y1), path in tiles:
+        tb = oiio.ImageBuf(path)
+        ts = tb.spec()
+        if list(ts.channelnames) != names:
+            raise RuntimeError(f"{os.path.basename(path)} has different passes "
+                               f"from the first tile; delete it and resume")
+        if (ts.width, ts.height) != (x1 - x0, y1 - y0):
+            raise RuntimeError(f"{os.path.basename(path)} is {ts.width}x{ts.height}, "
+                               f"expected {x1 - x0}x{y1 - y0}")
+        if not iba.paste(full, x0, y0, 0, 0, tb):
+            raise RuntimeError(f"paste failed: {oiio.geterror()}")
+    tmp = out_path + ".tmp.exr"
+    if not full.write(tmp):
+        raise RuntimeError(f"could not write the stitched image: {full.geterror()}")
+    os.replace(tmp, out_path)
+
+
+def _composite(scene, stitched, final_path):
+    """
+    Run the scene's own compositor once, on the stitched image, and save the
+    result exactly as F12 would: same view transform, same file format.
+
+    Done in a throwaway scene holding a COPY of the compositor, whose Render
+    Layers node is swapped for an Image node reading the stitched EXR. The real
+    scene and its node tree are never touched.
+    """
+    r = scene.render
+    W = int(r.resolution_x * r.resolution_percentage / 100)
+    H = int(r.resolution_y * r.resolution_percentage / 100)
+    vl_name = bpy.context.view_layer.name
+
+    img = bpy.data.images.load(stitched, check_existing=False)
+    tmp_scene = bpy.data.scenes.new("_rendafar_composite")
+    group = None
+    try:
+        t = tmp_scene.render
+        t.engine = "BLENDER_WORKBENCH"
+        t.resolution_x, t.resolution_y, t.resolution_percentage = W, H, 100
+        t.pixel_aspect_x, t.pixel_aspect_y = r.pixel_aspect_x, r.pixel_aspect_y
+        t.dither_intensity = r.dither_intensity
+        t.film_transparent = r.film_transparent
+
+        vs, tv = scene.view_settings, tmp_scene.view_settings
+        tmp_scene.display_settings.display_device = scene.display_settings.display_device
+        tv.view_transform = vs.view_transform
+        tv.look = vs.look
+        tv.exposure = vs.exposure
+        tv.gamma = vs.gamma
+        if vs.use_curve_mapping:
+            print("  ⚠  the scene uses view Curves; they are NOT copied to the "
+                  "composite pass", flush=True)
+
+        src, dst = r.image_settings, t.image_settings
+        if hasattr(src, "media_type"):
+            dst.media_type = src.media_type
+        dst.file_format = src.file_format
+        for attr in ("color_mode", "color_depth", "compression", "quality",
+                     "exr_codec", "color_management"):
+            try:
+                setattr(dst, attr, getattr(src, attr))
+            except (AttributeError, TypeError):
+                pass
+
+        tree = scene.compositing_node_group if r.use_compositing else None
+        if tree is not None:
+            group = tree.copy()
+        else:
+            group = bpy.data.node_groups.new("_rendafar_composite", "CompositorNodeTree")
+            group.interface.new_socket("Image", in_out="OUTPUT",
+                                       socket_type="NodeSocketColor")
+            group.nodes.new("NodeGroupOutput")
+            rl = group.nodes.new("CompositorNodeRLayers")
+            out = next(n for n in group.nodes if n.bl_idname == "NodeGroupOutput")
+            group.links.new(rl.outputs["Image"], out.inputs[0])
+
+        for rl in [n for n in group.nodes if n.bl_idname == "CompositorNodeRLayers"]:
+            node = group.nodes.new("CompositorNodeImage")
+            node.image = img
+            node.layer = rl.layer or vl_name
+            node.location = rl.location
+            for l in list(group.links):
+                if l.from_node != rl:
+                    continue
+                name = l.from_socket.name
+                # The Render Layers "Image" is the Combined pass in a file.
+                src_sock = node.outputs.get("Combined" if name == "Image" else name)
+                if src_sock is None or not src_sock.enabled:
+                    # A pass the compositor is wired to but Cycles never
+                    # produced (e.g. Denoising Albedo/Normal while render
+                    # denoising is off). Render Layers hands over nothing for
+                    # it either, so the input is left unconnected, as F12 has it.
+                    print(f"  (compositor input {name!r}: not rendered, left empty)",
+                          flush=True)
+                    group.links.remove(l)
+                    continue
+                group.links.new(src_sock, l.to_socket)
+            group.nodes.remove(rl)
+
+        tmp_scene.compositing_node_group = group
+        t.use_compositing = True
+
+        bpy.ops.render.render(scene=tmp_scene.name)
+        res = bpy.data.images["Render Result"]
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+        part = os.path.splitext(final_path)[0] + "_partial" + os.path.splitext(final_path)[1]
+        res.save_render(part, scene=tmp_scene)
+        os.replace(part, final_path)
+    finally:
+        bpy.data.scenes.remove(tmp_scene)
+        if group is not None:
+            bpy.data.node_groups.remove(group)
+        bpy.data.images.remove(img)
+
+
+def render_tiled_still(scene, frame, template, out_dir, manifest, old, write_manifest):
+    r = scene.render
+    scene.frame_set(frame)
+    r.filepath = template
+    final = bpy.path.abspath(r.frame_path(frame=frame))
+
+    W = int(r.resolution_x * r.resolution_percentage / 100)
+    H = int(r.resolution_y * r.resolution_percentage / 100)
+    cols, rows, xs, ys = _tile_bounds(W, H, TILE_SIZE)
+    stem = os.path.splitext(os.path.basename(final))[0]
+    tile_dir = os.path.join(os.path.dirname(final), f"_tiles_{stem}")
+    os.makedirs(tile_dir, exist_ok=True)
+    vl_name = bpy.context.view_layer.name
+
+    tiles = []                       # ((x0, y0, x1, y1) from the TOP-left, path)
+    for row in range(rows):
+        for col in range(cols):
+            tiles.append(((xs[col], ys[row], xs[col + 1], ys[row + 1]),
+                          os.path.join(tile_dir, _tile_name(row, col))))
+    total = len(tiles)
+
+    manifest.update({
+        "unit": "tiles", "cols": cols, "rows": rows, "total": total,
+        "grid": "0" * total, "tile_dir": tile_dir, "final": final,
+        "tile_size": TILE_SIZE,
+    })
+    manifest["frame_times"] = dict(old.get("frame_times", {}))
+
+    # Settings that decide what a tile looks like. Tiles from a different
+    # setup must never be stitched together, so a change refuses to resume.
+    try:
+        _c = scene.cycles
+        _samp = [_c.samples, _c.use_adaptive_sampling, round(_c.adaptive_threshold, 6),
+                 _c.adaptive_min_samples, _c.seed]
+    except AttributeError:
+        _samp = None
+    layout = {"W": W, "H": H, "cols": cols, "rows": rows, "frame": frame,
+              "camera": scene.camera.name, "sampling": _samp}
+    lpath = os.path.join(tile_dir, "layout.json")
+    if os.path.isfile(lpath):
+        with open(lpath, encoding="utf-8") as f:
+            prev = json.load(f)
+        if prev != layout and (any(os.path.isfile(p) for _, p in tiles)
+                               or os.path.isfile(os.path.join(tile_dir, "stitched.exr"))):
+            raise RuntimeError(
+                "the tiles on disk were rendered with different settings:\n"
+                f"   on disk : {prev}\n   now     : {layout}\n"
+                f"   delete {tile_dir} to start over")
+    with open(lpath, "w", encoding="utf-8") as f:
+        json.dump(layout, f, indent=2)
+
+    def mark_existing():
+        n = 0
+        g = []
+        for _, p in tiles:
+            ok = os.path.isfile(p)
+            g.append("1" if ok else "0")
+            n += ok
+        manifest["grid"] = "".join(g)
+        return n
+
+    print(f"  TILED STILL  : {cols} × {rows} = {total} tiles of ~{TILE_SIZE} px"
+          f"  →  {os.path.basename(final)}", flush=True)
+    print(f"  tiles folder : {tile_dir}", flush=True)
+
+    if SKIP_EXISTING and os.path.exists(final):
+        print(f"  final image already on disk, nothing to do", flush=True)
+        manifest["grid"] = "1" * total
+        manifest["frames_done"] = total
+        manifest["last_file"] = final
+        write_manifest()
+        return manifest
+
+    # Tiles already assembled and cleaned up, final image missing: the user
+    # deleted it to redo the compositing (a Glare change, say). Recomposite
+    # from the kept stitched image; nothing is rendered again.
+    stitched = os.path.join(tile_dir, "stitched.exr")
+    if (SKIP_EXISTING and os.path.isfile(stitched)
+            and not any(os.path.isfile(p) for _, p in tiles)):
+        print(f"  Tiles already assembled: compositing again from stitched.exr",
+              flush=True)
+        t0 = time.time()
+        _composite(scene, stitched, final)
+        print(f"  composite  {_hms(time.time() - t0)}", flush=True)
+        manifest["grid"] = "1" * total
+        manifest["frames_done"] = total
+        manifest["last_file"] = final
+        write_manifest()
+        return manifest
+
+    done = mark_existing() if SKIP_EXISTING else 0
+    # The last tile only counts as done once the final image exists, so the
+    # queue never calls the job finished between the last tile and the stitch.
+    manifest["frames_done"] = min(done, total - 1)
+    if done:
+        print(f"  Resume: {done}/{total} tiles already on disk", flush=True)
+        try:
+            manifest["last_file"] = _update_preview(tile_dir, tiles, W, H, vl_name)
+        except Exception as e:
+            print(f"  (preview not updated: {e})", flush=True)
+    write_manifest()
+
+    s = r.image_settings
+    keep = {"media": getattr(s, "media_type", None), "fmt": s.file_format, "depth": s.color_depth, "codec": s.exr_codec,
+            "mode": s.color_mode, "border": r.use_border, "crop": r.use_crop_to_border,
+            "comp": r.use_compositing, "ext": r.use_file_extension,
+            "persist": r.use_persistent_data,
+            "bx": (r.border_min_x, r.border_max_x, r.border_min_y, r.border_max_y)}
+    times = []
+    t_session = time.time()
+    try:
+        # Blender 5 moved multilayer out of file_format into media_type.
+        if hasattr(s, "media_type"):
+            s.media_type = "MULTI_LAYER_IMAGE"
+        if s.file_format != "OPEN_EXR_MULTILAYER":
+            s.file_format = "OPEN_EXR_MULTILAYER"
+        s.color_depth = "16"     # half float: plenty for Denoise/Glare, half the disk
+        s.exr_codec = "ZIP"
+        s.color_mode = "RGBA"
+        r.use_border = True
+        r.use_crop_to_border = True
+        r.use_compositing = False
+        r.use_file_extension = True
+        r.use_persistent_data = True      # the scene is synced once, not per tile
+
+        for i, ((x0, y0, x1, y1), path) in enumerate(tiles):
+            if SKIP_EXISTING and os.path.isfile(path):
+                continue
+            # Blender truncates border*size to whole pixels; a quarter pixel
+            # inside each edge lands on the intended pixel either way.
+            r.border_min_x = (x0 + 0.25) / W
+            r.border_max_x = (x1 + 0.25) / W
+            r.border_min_y = (H - y1 + 0.25) / H
+            r.border_max_y = (H - y0 + 0.25) / H
+            part = path[:-4] + "_partial"
+            print(f"  [{i+1:>3}/{total}]  tile r{i // cols} c{i % cols}"
+                  f"  x {x0}-{x1}  y {y0}-{y1}", flush=True)
+            t0 = time.time()
+            r.filepath = part
+            bpy.ops.render.render(write_still=True)
+            written = part + ".exr"
+            if not os.path.isfile(written):
+                raise RuntimeError(f"Blender did not write {written}")
+            import OpenImageIO as oiio
+            sp = oiio.ImageInput.open(written)
+            tw, th = sp.spec().width, sp.spec().height
+            sp.close()
+            if (tw, th) != (x1 - x0, y1 - y0):
+                raise RuntimeError(f"tile came out {tw}x{th}, expected "
+                                   f"{x1 - x0}x{y1 - y0}: border maths is off")
+            os.replace(written, path)
+
+            el = time.time() - t0
+            times.append(el)
+            done = mark_existing()
+            manifest["frames_done"] = min(done, total - 1)
+            manifest["frame_times"][os.path.basename(path)] = round(el, 2)
+            try:
+                manifest["last_file"] = _update_preview(tile_dir, tiles, W, H, vl_name)
+            except Exception as e:
+                print(f"         (preview not updated: {e})", flush=True)
+            write_manifest()
+            avg = sum(times) / len(times)
+            print(f"         ↳  tile {_hms(el)}  |  avg {_hms(avg)}  |  "
+                  f"elapsed {_hms(time.time() - t_session)}  |  "
+                  f"ETA {_hms(avg * (total - done))}", flush=True)
+    finally:
+        if keep["media"] is not None:
+            s.media_type = keep["media"]
+        s.file_format = keep["fmt"]
+        for k, a in (("depth", "color_depth"), ("codec", "exr_codec"), ("mode", "color_mode")):
+            try:
+                setattr(s, a, keep[k])
+            except TypeError:
+                pass
+        r.use_border, r.use_crop_to_border = keep["border"], keep["crop"]
+        r.use_compositing = keep["comp"]
+        r.use_file_extension = keep["ext"]
+        r.use_persistent_data = keep["persist"]
+        (r.border_min_x, r.border_max_x, r.border_min_y, r.border_max_y) = keep["bx"]
+        r.filepath = template
+
+    missing = [os.path.basename(p) for _, p in tiles if not os.path.isfile(p)]
+    if missing:
+        raise RuntimeError(f"{len(missing)} tiles missing: {missing[:5]}")
+
+    print(f"\n  All {total} tiles on disk. Stitching…", flush=True)
+    t0 = time.time()
+    _stitch(tiles, W, H, stitched)
+    print(f"  Compositing the whole image with the scene's compositor…", flush=True)
+    _composite(scene, stitched, final)
+    print(f"  stitch + composite  {_hms(time.time() - t0)}", flush=True)
+
+    # stitched.exr holds every tile, raw, so the tiles themselves are now
+    # redundant. Kept: stitched.exr (to redo the compositing), layout.json,
+    # preview.jpg. Only once the final image is safely on disk.
+    if os.path.isfile(final):
+        freed = 0
+        for _, p in tiles:
+            try:
+                freed += os.path.getsize(p)
+                os.remove(p)
+            except OSError:
+                pass
+        print(f"  tiles removed ({freed / 1e6:.0f} MB), stitched.exr kept to "
+              f"redo the compositing", flush=True)
+
+    manifest["grid"] = "1" * total
+    manifest["frames_done"] = total
+    manifest["last_file"] = final
+    write_manifest()
+    print(f"\n{'═' * 64}\n  {total}/{total} tiles  |  final  →  {final}"
+          f"\n  to redo the compositing: change it in the .blend, delete the"
+          f"\n  final image, resume the job (nothing is re-rendered)\n{'═' * 64}",
+          flush=True)
+    return manifest
+
+
 def render_classic():
     scene = bpy.context.scene
     r     = scene.render
@@ -363,6 +767,14 @@ def render_classic():
     session_start = time.time()
     times         = []
     done_count    = 0
+
+    if MODE == "still" and TILE_SIZE > 0 and not is_movie:
+        try:
+            return render_tiled_still(scene, frames[0], template, out_dir,
+                                      manifest, old, write_manifest)
+        finally:
+            r.filepath   = state["filepath"]
+            scene.camera = state["camera"]
 
     # ── Let Blender render it, so the progress reaches the log ───────────
     #

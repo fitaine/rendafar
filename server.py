@@ -642,6 +642,8 @@ class Handler(BaseHTTPRequestHandler):
             cfg["MODE"] = "still" if kind == "still" else "animation"
             if kind == "still" and body.get("frame"):
                 cfg["FRAME"] = int(body["frame"])
+            if kind == "still" and body.get("tile_size"):
+                cfg["TILE_SIZE"] = int(body["tile_size"])
             if kind == "animation":
                 if body.get("frame_start"):
                     cfg["FRAME_START"] = int(body["frame_start"])
