@@ -79,20 +79,27 @@ class LogPanel(Panel):
         self.view.setFont(theme.font(theme.MONO, 9))
         self.lay.addWidget(self.view, 1)
 
-        self._seen = 0
+        self._last = None
 
     def set_lines(self, lines):
         if not lines:
             return
         # Append only what is new; re-setting the whole buffer would lose the
         # scroll position and flicker on every poll.
-        if len(lines) < self._seen:
-            self._seen = 0                      # a new job restarted the log
-            self.view.clear()
-        new = lines[self._seen:]
+        # The server sends a sliding window (the last 400 lines), so once a
+        # render passes 400 lines the COUNT stops growing. Counting froze the
+        # panel mid-render on 2026-11-12. Find the last line we showed instead.
+        last = self._last
+        if last is not None and last in lines:
+            i = len(lines) - 1 - lines[::-1].index(last)
+            new = lines[i + 1:]
+        else:
+            if last is not None:
+                self.view.clear()               # a new job restarted the log
+            new = lines
         if not new:
             return
-        self._seen = len(lines)
+        self._last = lines[-1]
 
         bar = self.view.verticalScrollBar()
         at_end = bar.value() >= bar.maximum() - 4
