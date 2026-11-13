@@ -598,16 +598,23 @@ class Runner:
         watch = gpu_health.HangWatch(self._log_line)
         job = qm.load_job(self._job_id)
         last_done, since = self._done_count(job), time.time()
+        last_key, key_at = None, None     # Cycles' sample count and when it moved
         while proc.poll() is None:
             time.sleep(gpu_health.GPU_SAMPLE_S)
             with self._lock:
                 if self._proc is not proc or self._stopping:
                     return
+                live = self._live
             done = self._done_count(job)
             if done != last_done:
                 last_done, since = done, time.time()
+            if live and "sample" in live:
+                key = (live.get("frame"), live["sample"], live.get("cy_done"))
+                if key != last_key:
+                    last_key, key_at = key, live["at"]
             avg = (paths.progress(job) or {}).get("avg_tile_s") or 0
-            reason = watch.tick(time.time() - since, avg)
+            progress_age = (time.time() - key_at) if key_at else None
+            reason = watch.tick(time.time() - since, avg, progress_age)
             if reason:
                 self._log_line(f"  !! {reason}. Killing the render; "
                                "finished tiles are kept. Reboot before rendering again.")

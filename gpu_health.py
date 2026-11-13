@@ -15,14 +15,10 @@ So two guards:
    fault means the driver is suspect. The job is re-queued (finished tiles are
    kept) and the queue refuses to start anything until Windows has rebooted.
 
-2. HangWatch: while a job renders, sample nvidia-smi. A hang is declared only
-   when BOTH hold, so a merely heavy tile is never killed:
-     - the current tile has run far longer than this job's own average
-       (GPU_HANG_TILE_FACTOR x avg, at least GPU_HANG_MIN_TILE_S), and
-     - for the last GPU_HANG_LOWPOWER_S the card has shown high load but
-       low power (under GPU_HANG_POWER_FRAC of its limit).
-   Power samples also go into the job log every few minutes, so the
-   threshold can be checked against real renders.
+2. HangWatch: a hang is declared when Cycles' sample count has not moved for
+   GPU_STALL_S. Power is only logged: Tête du faisan renders healthily at
+   ~65 W / 100 %, the same reading as the Julien hang, so power cannot decide.
+   Scripts that report no samples get only a 6 h / 10x-average ceiling.
 """
 
 import ctypes
@@ -36,10 +32,11 @@ import config
 NVSMI = r"C:\Windows\System32\nvidia-smi.exe"   # PATH loses System32 on this machine
 
 # Defaults; any can be overridden in config.py.
-GPU_HANG_TILE_FACTOR = getattr(config, "GPU_HANG_TILE_FACTOR", 3.0)
-GPU_HANG_MIN_TILE_S  = getattr(config, "GPU_HANG_MIN_TILE_S", 60 * 60)
-GPU_HANG_POWER_FRAC  = getattr(config, "GPU_HANG_POWER_FRAC", 0.40)
-GPU_HANG_LOWPOWER_S  = getattr(config, "GPU_HANG_LOWPOWER_S", 20 * 60)
+# A hang = Cycles' sample count frozen this long (render_classic 11-12b+ reports it).
+GPU_STALL_S           = getattr(config, "GPU_STALL_S", 30 * 60)
+# Scripts that report no samples: only a very generous per-tile ceiling.
+GPU_BLIND_MIN_TILE_S  = getattr(config, "GPU_BLIND_MIN_TILE_S", 6 * 3600)
+GPU_BLIND_TILE_FACTOR = getattr(config, "GPU_BLIND_TILE_FACTOR", 10.0)
 GPU_SAMPLE_S         = getattr(config, "GPU_SAMPLE_S", 30)
 GPU_LOG_EVERY_S      = getattr(config, "GPU_LOG_EVERY_S", 10 * 60)
 
@@ -115,25 +112,29 @@ class HangWatch:
         self.low_since = None
         self.last_log = 0
 
-    def tick(self, tile_age_s, avg_tile_s):
+    def tick(self, tile_age_s, avg_tile_s, progress_age_s=None):
+        """
+        progress_age_s: seconds since Cycles' sample count last moved, or None
+        when the render reports no samples (older pinned scripts).
+
+        Power is logged, NOT used to decide: Tête du faisan renders healthily
+        at ~65 W / 100 % (measured 2026-11-12), the same reading the Julien
+        hang showed. Only a frozen sample count proves a hang.
+        """
         s = sample()
-        if s is None:
-            return None
         now = time.time()
-        if now - self.last_log >= GPU_LOG_EVERY_S:
+        if s and now - self.last_log >= GPU_LOG_EVERY_S:
             self.last_log = now
             self.log(f"  [gpu] {s['util']:.0f} %  {s['power']:.0f}/{s['limit']:.0f} W  "
                      f"{s['temp']:.0f} °C   tile running {tile_age_s / 60:.0f} min")
-        low = s["util"] >= 90 and s["power"] < GPU_HANG_POWER_FRAC * s["limit"]
-        if not low:
-            self.low_since = None
+        if progress_age_s is not None:
+            if progress_age_s >= GPU_STALL_S:
+                return (f"GPU hung: no new sample for {progress_age_s / 60:.0f} min "
+                        f"(tile running {tile_age_s / 60:.0f} min)")
             return None
-        if self.low_since is None:
-            self.low_since = now
-        limit = max(GPU_HANG_MIN_TILE_S, GPU_HANG_TILE_FACTOR * (avg_tile_s or 0))
-        if tile_age_s > limit and now - self.low_since >= GPU_HANG_LOWPOWER_S:
-            return (f"GPU hung: tile running {tile_age_s / 60:.0f} min "
-                    f"(avg {(avg_tile_s or 0) / 60:.0f}), card at {s['util']:.0f} % "
-                    f"but only {s['power']:.0f}/{s['limit']:.0f} W for "
-                    f"{(now - self.low_since) / 60:.0f} min")
+        # No sample reporting: only a very generous ceiling.
+        limit = max(GPU_BLIND_MIN_TILE_S, GPU_BLIND_TILE_FACTOR * (avg_tile_s or 0))
+        if tile_age_s > limit:
+            return (f"GPU hung? tile running {tile_age_s / 3600:.1f} h with no "
+                    f"progress reporting (avg {(avg_tile_s or 0) / 60:.0f} min)")
         return None

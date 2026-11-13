@@ -535,6 +535,24 @@ def render_tiled_still(scene, frame, template, out_dir, manifest, old, write_man
         r.use_file_extension = True
         r.use_persistent_data = True      # the scene is synced once, not per tile
 
+        # bpy.ops.render.render() prints no progress in background mode, but
+        # the render_stats handler still receives Cycles' status line
+        # ("Remaining … | Mem … | Sample 992/2048"). Echo it, throttled, in the
+        # format runner.py parses: live progress in the app, and the GPU
+        # watchdog can tell a slow tile (samples still moving) from a hung one.
+        # Tête du faisan tile 2 needed 9x tile 1 on 2026-11-12, at the same
+        # ~65 W a hang shows, so power alone could not tell them apart.
+        _last = {"t": 0.0, "s": None}
+
+        def _stats(stats, *_):
+            now = time.time()
+            if now - _last["t"] < 15:
+                return
+            _last["t"] = now
+            print(f"Fra:{frame} | {stats}", flush=True)
+
+        bpy.app.handlers.render_stats.append(_stats)
+
         for i, ((x0, y0, x1, y1), path) in enumerate(tiles):
             if SKIP_EXISTING and os.path.isfile(path):
                 continue
@@ -577,6 +595,9 @@ def render_tiled_still(scene, frame, template, out_dir, manifest, old, write_man
                   f"elapsed {_hms(time.time() - t_session)}  |  "
                   f"ETA {_hms(avg * (total - done))}", flush=True)
     finally:
+        for h in list(bpy.app.handlers.render_stats):
+            if getattr(h, "__name__", "") == "_stats":
+                bpy.app.handlers.render_stats.remove(h)
         if keep["media"] is not None:
             s.media_type = keep["media"]
         s.file_format = keep["fmt"]

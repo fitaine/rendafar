@@ -43,22 +43,31 @@ g.sample = lambda: dict(feed)
 logged = []
 w = g.HangWatch(logged.append)
 
-def run(minutes, tile_start_min, avg_min, util, power):
+def run(minutes, avg_min, util, power, stall_after_min=None):
+    """Tick for `minutes`; samples move every tick until stall_after_min."""
     feed.update(util=util, power=power, limit=200, temp=41)
-    out = None
-    for _ in range(int(minutes * 2)):
+    out, last_move = None, 0.0
+    for k in range(int(minutes * 2)):
         clock[0] += 30
-        out = w.tick(clock[0] - tile_start_min * 60, avg_min * 60) or out
+        if stall_after_min is None or clock[0] < stall_after_min * 60:
+            last_move = clock[0]
+        out = w.tick(clock[0], avg_min * 60, clock[0] - last_move) or out
     return out
 
-check("heavy tile at full power is never killed", run(180, 0, 30, 99, 180) is None)
+check("Tete du faisan: 65 W for 3 h with samples moving is NOT a hang",
+      run(180, 8.5, 100, 65) is None)
 clock[0] = 0; w = g.HangWatch(logged.append)
-check("low power but tile still young: no kill", run(50, 0, 30, 99, 57) is None)
+r = run(120, 30, 99, 57, stall_after_min=5)
+check("samples frozen for 30 min is a hang", r and "no new sample" in r, r)
 clock[0] = 0; w = g.HangWatch(logged.append)
-r = run(120, 0, 30, 99, 57)
-check("the 2026-11-12 picture (99 %, 57 W, 2 h on a 31-min tile) is a hang", r, r)
+check("samples frozen 20 min: not yet", run(25, 30, 99, 57, stall_after_min=5) is None)
 clock[0] = 0; w = g.HangWatch(logged.append)
-check("idle card (low util) is not a hang", run(120, 0, 30, 5, 20) is None)
+feed.update(util=99, power=57, limit=200, temp=41)
+blind = None
+for _ in range(int(7 * 3600 / 30)):
+    clock[0] += 30
+    blind = w.tick(clock[0], 30 * 60, None) or blind
+check("no sample reporting: only the 6 h ceiling", blind and clock[0] >= 6 * 3600, blind)
 check("power readings go to the log", any("[gpu]" in l for l in logged), logged[:1])
 
 # 4. Reboot gate.
