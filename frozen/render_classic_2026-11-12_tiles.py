@@ -294,7 +294,7 @@ def _stitch(tiles, W, H, out_path):
     spec.full_width, spec.full_height = W, H
     spec.x = spec.y = spec.full_x = spec.full_y = 0
     spec.tile_width = spec.tile_height = 0
-    spec.set_format(oiio.HALF)
+    spec.set_format(oiio.FLOAT)
     full = oiio.ImageBuf(spec)
     for (x0, y0, x1, y1), path in tiles:
         tb = oiio.ImageBuf(path)
@@ -526,7 +526,7 @@ def render_tiled_still(scene, frame, template, out_dir, manifest, old, write_man
             s.media_type = "MULTI_LAYER_IMAGE"
         if s.file_format != "OPEN_EXR_MULTILAYER":
             s.file_format = "OPEN_EXR_MULTILAYER"
-        s.color_depth = "16"     # half float: plenty for Denoise/Glare, half the disk
+        s.color_depth = "32"     # full float, as asked: no precision lost before compositing
         s.exr_codec = "ZIP"
         s.color_mode = "RGBA"
         r.use_border = True
