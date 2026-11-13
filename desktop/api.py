@@ -63,7 +63,9 @@ def start_server():
     env = os.environ.copy()
     env["RENDAFAR_APP_MODE"] = "1"
     subprocess.Popen(
-        [pyw, os.path.join(config.APP_DIR, "server.py")],
+        # The supervisor, not server.py directly: it restarts the server if
+        # it crashes (supervisor.py). The environment passes through to it.
+        [pyw, os.path.join(config.APP_DIR, "supervisor.py")],
         cwd=config.APP_DIR, env=env,
         creationflags=NO_WINDOW | subprocess.DETACHED_PROCESS,
         close_fds=True,

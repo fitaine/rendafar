@@ -271,6 +271,8 @@ class Runner:
         self._started  = None
         self._buffer   = deque(maxlen=config.LOG_BUFFER_LINES)
         self._logfile  = None
+        self._log_path = None
+        self._log_offset = 0
         self._live     = None       # progress inside the current frame/tile
         self._adopted  = False      # supervising a render a crashed server left
         self._gpu_fault = None      # set by _gpu_watch when it kills a hung render
@@ -401,17 +403,36 @@ class Runner:
                 f"{'=' * 70}\n")
             self._logfile.flush()
 
-            self._proc = subprocess.Popen(
-                cmd, env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                bufsize=1,
-                cwd=config.APP_DIR,
-                # NO_WINDOW as well as the process group: Blender is a console
-                # program, and its output is already captured here, so a
-                # console window would only flash up and steal focus.
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW,
-            )
+            # Blender writes straight into the job log, not into a pipe held by
+            # this server. With a pipe, a dying server took Blender down with it
+            # (2026-11-13, 12:15: network/VPN trouble, server gone, render
+            # gone). Now the render carries on alone and _pump tails the file;
+            # a restarted server adopts it with live progress intact.
+            self._log_path = log_path
+            self._log_offset = self._logfile.tell()
+            blog = open(log_path, "ab")
+            try:
+                self._proc = subprocess.Popen(
+                    cmd, env=env,
+                    stdout=blog, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    cwd=config.APP_DIR,
+                    # Own process group, no console, and detached from this
+                    # server's console so its end is not Blender's end.
+                    creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW
+                                   | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)),
+                )
+            except OSError:
+                # Breakaway refused by an enclosing job object: launch without it.
+                self._proc = subprocess.Popen(
+                    cmd, env=env,
+                    stdout=blog, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    cwd=config.APP_DIR,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW,
+                )
+            finally:
+                blog.close()
             self._job_id   = job_id
             self._stopping = False
             self._stop_after = False
@@ -450,7 +471,7 @@ class Runner:
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(f"\n{'=' * 70}\nADOPTED {qm._now()}  pid {pid}\n"
                             "  The server restarted while this render was running.\n"
-                            "  The render was left alone; no live progress until it ends.\n"
+                            "  The render was left alone and is supervised again.\n"
                             f"{'=' * 70}\n")
             except OSError:
                 pass
@@ -460,10 +481,21 @@ class Runner:
             self._stop_after = False
             self._started  = time.time()
             self._buffer.clear()
-            self._buffer.append("(render adopted after a server restart: no live log)")
             self._live     = None
             self._adopted  = True
+            # Renders started since 2026-11-13 write their log themselves, so
+            # progress keeps flowing after adoption. Older ones simply go quiet.
+            self._log_path = log_path
+            try:
+                self._log_offset = os.path.getsize(log_path)
+            except OSError:
+                self._log_offset = 0
+            self._logfile = open(log_path, "a", encoding="utf-8", errors="replace")
+            self._gpu_fault = None
+            threading.Thread(target=self._pump,  daemon=True).start()
             threading.Thread(target=self._watch, daemon=True).start()
+            threading.Thread(target=self._gpu_watch, args=(self._proc,),
+                             daemon=True).start()
 
     # ── stop ─────────────────────────────────────────────────────────────
 
@@ -568,27 +600,48 @@ class Runner:
     # ── internals ────────────────────────────────────────────────────────
 
     def _pump(self):
-        """Tee Blender's stdout to the live buffer and the job log."""
-        proc = self._proc
-        if proc.stdout is None:
-            return      # adopted render: nothing to read
+        """
+        Tail the job log (Blender writes it directly) into the live buffer.
+        Lines this server writes itself (_log_line) arrive the same way.
+        """
+        proc, path, pos = self._proc, self._log_path, self._log_offset
+        partial, last_poll, ended = b"", 0.0, False
         try:
-            for line in proc.stdout:
-                line = line.rstrip("\r\n")
-                live = parse_progress_line(line)
-                with self._lock:
-                    self._buffer.append(line)
-                    if live:
-                        self._live = live
-                    if self._logfile:
-                        self._logfile.write(line + "\n")
-                        self._logfile.flush()
-        except (ValueError, OSError):
-            pass        # pipe closed by the kill — expected on stop
+            f = open(path, "rb")
+        except OSError:
+            return
+        with f:
+            f.seek(pos)
+            while True:
+                chunk = f.read(65536)
+                if chunk:
+                    data = partial + chunk
+                    lines = data.split(b"\n")
+                    partial = lines.pop()
+                    for raw in lines:
+                        line = raw.decode("utf-8", "replace").rstrip("\r")
+                        live = parse_progress_line(line)
+                        with self._lock:
+                            if self._proc is not proc:
+                                return
+                            self._buffer.append(line)
+                            if live:
+                                self._live = live
+                    continue
+                if ended:
+                    return                       # drained after the end
+                time.sleep(0.5)
+                # AdoptedProcess.poll runs tasklist: not every half second.
+                if time.time() - last_poll > 5:
+                    last_poll = time.time()
+                    if proc.poll() is not None:
+                        ended = True             # one more read, then stop
 
     def _log_line(self, line):
+        """Into the job log; _pump carries it to the live buffer."""
         with self._lock:
-            self._buffer.append(line)
+            if self._logfile is None:
+                self._buffer.append(line)
             if self._logfile:
                 self._logfile.write(line + "\n")
                 self._logfile.flush()
@@ -629,7 +682,7 @@ class Runner:
         proc = self._proc
         rc   = proc.wait()
         # Let the pump drain the last lines before deciding the outcome.
-        time.sleep(0.3)
+        time.sleep(6)
 
         with self._lock:
             job_id   = self._job_id

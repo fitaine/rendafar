@@ -65,6 +65,10 @@ print("\n--- 1. no env var: CONFIG block untouched (existing launch paths) ---")
 results.append(case("defaults preserved", None, checks={
     "LONG_EDGE": 120_000, "FILE_FORMAT": "WEBP", "SKIP_EXISTING": True,
     "PREVIEW_MODE": False, "TILE_LONG": 4096,
+    # Compositing defaults OFF: Glare/Denoise read neighbouring pixels, which
+    # do not exist past a tile edge, so per-tile compositing seams at every
+    # boundary.  A job may opt back in, but it must do so deliberately.
+    "USE_COMPOSITING": False,
 }))
 
 print("\n--- 2. valid job overrides ---")
@@ -80,12 +84,19 @@ results.append(case("overrides applied", job, checks={
     "TILE_LONG": 4096,          # untouched key keeps its CONFIG value
 }))
 
+print("\n--- 2b. compositing is opt-in per job ---")
+results.append(case("job may re-enable compositing", write_job("comp.json",
+    {"config": {"USE_COMPOSITING": True}}), checks={"USE_COMPOSITING": True}))
+results.append(case("compositing rejects a non-bool", write_job("comp_bad.json",
+    {"config": {"USE_COMPOSITING": 1}}), expect_exc=TypeError))
+
 print("\n--- 3. defaults bound into render_tiles() signature ---")
 os.environ["RENDERFARM_JOB"] = job
 m = load()
 import inspect
 d = inspect.signature(m.render_tiles).parameters
-ok = d["long_edge"].default == 40000 and d["preview_mode"].default is True
+ok = (d["long_edge"].default == 40000 and d["preview_mode"].default is True
+      and d["use_compositing"].default is False)
 print(f"  {'PASS' if ok else 'FAIL'}  render_tiles() defaults follow the override "
       f"(long_edge={d['long_edge'].default}, preview_mode={d['preview_mode'].default})")
 results.append(ok)

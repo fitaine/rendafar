@@ -41,6 +41,11 @@ def dropped_blend(argv):
 
 def main():
     try:
+        import crashlog
+        crashlog.install("app")
+    except Exception:
+        pass
+    try:
         from PySide6 import QtWidgets
     except ImportError:
         die("The Rendafar desktop app needs PySide6.",

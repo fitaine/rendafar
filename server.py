@@ -762,6 +762,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     config.ensure_dirs()
+    import crashlog
+    crashlog.install("server")
 
     # Boot recovery: any job left 'running' with no live Blender behind it is
     # marked interrupted, re-queued at the front, and started again — this is
