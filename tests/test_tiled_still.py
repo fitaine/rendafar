@@ -41,7 +41,7 @@ blend = sys.argv[1]
 out = os.path.join(TMP, "out") + os.sep + "still_"
 job = qm.create_job(blend, name="tiled", job_type="classic",
                     cfg={"MODE": "still", "TILE_SIZE": 200, "OUTPUT_DIR": out})
-check("job pins the tiles snapshot", job["script"].endswith("2026-11-12_tiles.py"), job["script"])
+check("job pins the tiles snapshot", job["script"].endswith("2026-11-18_tiles.py"), job["script"])
 check("runner does not use -f for a tiled still", cli_still_frame(job) is None)
 
 c = Controller()
